@@ -1,0 +1,83 @@
+name: Build & Release iOS IPA (PocketOllama)
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+jobs:
+  build-ipa:
+    name: Build Sideloadable iOS IPA
+    runs-on: macos-14 # Apple Silicon M1/M2 Runner
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Select Latest Xcode Version
+        run: |
+          sudo xcode-select -switch /Applications/Xcode_15.4.app/Contents/Developer
+          xcodebuild -version
+
+      - name: Cache SPM / Build Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Developer/Xcode/DerivedData
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Create Build Directories
+        run: |
+          mkdir -p build/Payload
+
+      - name: Build Archive (Unsigned for Sideloading / AltStore / Sideloadly)
+        run: |
+          xcodebuild build \
+            -scheme "PocketOllama" \
+            -destination "generic/platform=iOS" \
+            -configuration Release \
+            -derivedDataPath build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            GCC_PREPROCESSOR_DEFINITIONS="GGML_USE_METAL=1 SWIFT_PACKAGE=1" \
+            OTHER_SWIFT_FLAGS="-D GGML_USE_METAL"
+
+      - name: Package App into .IPA
+        run: |
+          APP_PATH=$(find build/DerivedData -name "PocketOllama.app" -type d | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: PocketOllama.app not found in DerivedData"
+            exit 1
+          fi
+          echo "Found app at: $APP_PATH"
+          cp -r "$APP_PATH" build/Payload/
+          cd build
+          zip -r -9 PocketOllama.ipa Payload
+          cd ..
+          ls -lh build/PocketOllama.ipa
+
+      - name: Upload IPA as GitHub Actions Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PocketOllama-iOS-IPA
+          path: build/PocketOllama.ipa
+          retention-days: 30
+
+      - name: Publish GitHub Release (On Tag Push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/PocketOllama.ipa
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

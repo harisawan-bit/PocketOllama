@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+DerivedData/
+build/
+*.xcarchive
+*.ipa
+*.dSYM
+*.xcuserstate
+.env
+*.token
