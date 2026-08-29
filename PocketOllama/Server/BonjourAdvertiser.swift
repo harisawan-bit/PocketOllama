@@ -22,9 +22,8 @@ public final class BonjourAdvertiser: @unchecked Sendable {
             "device": HardwareAutoTuner.shared.detectProfile().marketingName
         ]
         
-        if let txtData = NetService.data(fromTXTRecord: txtDict.mapValues { $0.data(using: .utf8) ?? Data() }) {
-            netService?.setTXTRecord(txtData)
-        }
+        let txtData = NetService.data(fromTXTRecord: txtDict.mapValues { $0.data(using: .utf8) ?? Data() })
+        netService?.setTXTRecord(txtData)
 
         netService?.publish(options: [.listenForConnections])
         isBroadcasting = true

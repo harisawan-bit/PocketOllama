@@ -10,7 +10,7 @@ public final class MemoryScavenger: @unchecked Sendable {
 
     public func getAvailableMemoryBytes() -> UInt64 {
         if #available(iOS 13.0, *) {
-            return os_proc_available_memory()
+            return UInt64(os_proc_available_memory())
         } else {
             var stats = vm_statistics64()
             var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)

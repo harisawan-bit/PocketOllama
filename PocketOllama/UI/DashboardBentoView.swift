@@ -17,19 +17,10 @@ public struct DashboardBentoView: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 20) {
-                    // 1. Dynamic Island Status Hero
                     heroStatusIsland
-
-                    // 2. Server Connection Card
                     serverConnectionCard
-
-                    // 3. Hardware & Telemetry Bento Grid
                     telemetryBentoGrid
-
-                    // 4. Context & KV Cache Allocation
                     contextAllocationCard
-
-                    // 5. Overnight Insomnia Nightstand Launcher
                     insomniaCard
                 }
                 .padding(.horizontal, 20)
@@ -135,7 +126,15 @@ public struct DashboardBentoView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 14)
-                .background(server.isRunning ? PocketTheme.rose : PocketTheme.cyanPurpleGradient)
+                .background(
+                    Group {
+                        if server.isRunning {
+                            LinearGradient(colors: [PocketTheme.rose, PocketTheme.rose], startPoint: .leading, endPoint: .trailing)
+                        } else {
+                            PocketTheme.cyanPurpleGradient
+                        }
+                    }
+                )
                 .foregroundColor(.white)
                 .cornerRadius(14)
                 .shadow(color: server.isRunning ? PocketTheme.rose.opacity(0.4) : PocketTheme.cyan.opacity(0.3), radius: 12)

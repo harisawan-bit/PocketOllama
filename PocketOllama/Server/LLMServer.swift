@@ -21,7 +21,6 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         self.localIPAddress = getWiFiAddress() ?? "127.0.0.1"
 
         let params = NWParameters.tcp
-        params.enableFastOpen = true
         params.allowLocalEndpointReuse = true
         params.defaultProtocolStack.transportProtocol = NWProtocolTCP.Options().then {
             $0.noDelay = true
