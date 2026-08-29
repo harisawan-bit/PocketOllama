@@ -10,13 +10,7 @@ public struct ChatMessage: Identifiable, Equatable {
 }
 
 public struct ChatPlaygroundView: View {
-    @State private var messages: [ChatMessage] = [
-        ChatMessage(
-            role: "assistant",
-            content: "PocketOllama runtime initialized on Apple Silicon Metal GPU. Ready for inference or agent testing.",
-            reasoningContent: nil
-        )
-    ]
+    @State private var messages: [ChatMessage] = []
     @State private var inputText: String = ""
     @State private var isGenerating: Bool = false
     @State private var generationStartTime: Date?
@@ -33,13 +27,17 @@ public struct ChatPlaygroundView: View {
                 // Message Stream
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(messages) { msg in
-                                chatBubble(for: msg)
+                        if messages.isEmpty {
+                            emptyTerminalPlaceholder
+                        } else {
+                            LazyVStack(spacing: 12) {
+                                ForEach(messages) { msg in
+                                    chatBubble(for: msg)
+                                }
                             }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 10)
                         }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
                     }
                     .onChange(of: messages.count) { _ in
                         if let last = messages.last {
@@ -82,6 +80,12 @@ public struct ChatPlaygroundView: View {
                 .padding(.vertical, 3)
                 .background(PocketTheme.terminalGreen.opacity(0.12))
                 .cornerRadius(4)
+            } else if !messages.isEmpty {
+                Button("Clear") {
+                    messages.removeAll()
+                }
+                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .foregroundColor(PocketTheme.textMuted)
             }
         }
         .padding(.horizontal, 14)
@@ -93,6 +97,27 @@ public struct ChatPlaygroundView: View {
                 .foregroundColor(PocketTheme.borderSubtle),
             alignment: .bottom
         )
+    }
+
+    private var emptyTerminalPlaceholder: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            Image(systemName: "cpu")
+                .font(.system(size: 32))
+                .foregroundColor(PocketTheme.textMuted.opacity(0.5))
+            
+            Text("Metal GPU Inference Pipeline Ready")
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .foregroundColor(PocketTheme.textSecondary)
+
+            Text("Enter any prompt below to evaluate real-time reasoning traces and token streaming.")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(PocketTheme.textMuted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Spacer()
+        }
+        .padding(.vertical, 40)
     }
 
     // MARK: - Chat Bubble
@@ -108,7 +133,7 @@ public struct ChatPlaygroundView: View {
                             Image(systemName: "brain.head.profile")
                                 .font(.system(size: 10))
                                 .foregroundColor(PocketTheme.devIndigo)
-                            Text("THOUGHT TRACE / SCRATCHPAD")
+                            Text("THOUGHT TRACE // DEEPSEEK-R1 / HERMES 3")
                                 .font(.system(size: 9, weight: .bold, design: .monospaced))
                                 .foregroundColor(PocketTheme.devIndigo)
                             Spacer()
