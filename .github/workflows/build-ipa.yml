@@ -9,7 +9,7 @@ on:
 jobs:
   build-ipa:
     name: Build Sideloadable iOS IPA
-    runs-on: macos-14 # Apple Silicon M1/M2 Runner
+    runs-on: macos-15 # Apple Silicon Runner with Xcode 16
     
     steps:
       - name: Checkout Repository
@@ -18,10 +18,8 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Select Latest Xcode Version
-        run: |
-          sudo xcode-select -switch /Applications/Xcode_15.4.app/Contents/Developer
-          xcodebuild -version
+      - name: Show Xcode Version
+        run: xcodebuild -version
 
       - name: Install xcodegen
         run: brew install xcodegen
