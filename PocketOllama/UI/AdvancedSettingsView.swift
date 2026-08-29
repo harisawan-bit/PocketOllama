@@ -51,11 +51,18 @@ public struct AdvancedSettingsView: View {
     private var computeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("METAL GPU THREAD ALLOCATION")
+                Text("METAL GPU & NEURAL ENGINE")
                     .font(.system(size: 9, weight: .black, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
                 Spacer()
-                Text("Rec: \(config.recommendedThreads)T")
+                Text("ANE: \(String(format: "%.0f", hardware.aneTOPS)) TOPS")
+                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(PocketTheme.terminalGreen.opacity(0.15))
+                    .foregroundColor(PocketTheme.terminalGreen)
+                    .cornerRadius(4)
+                Text("P-Cores: \(config.recommendedThreads)T")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)

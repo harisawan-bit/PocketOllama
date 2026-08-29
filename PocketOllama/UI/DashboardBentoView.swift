@@ -72,8 +72,8 @@ public struct DashboardBentoView: View {
 
             Spacer()
 
-            Text("\(hardware.socName) • \(String(format: "%.0f", hardware.totalRAMGB))GB RAM")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            Text("\(hardware.socName) • \(String(format: "%.0f", hardware.totalRAMGB))GB • \(String(format: "%.0f", hardware.aneTOPS)) TOPS ANE")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundColor(PocketTheme.textSecondary)
         }
         .padding(.horizontal, 14)
