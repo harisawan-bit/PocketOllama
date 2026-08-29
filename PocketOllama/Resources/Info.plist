@@ -15,11 +15,20 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>2.0.0</string>
+    <string>2.1.0</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>2</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    
+    <!-- CRITICAL: Native Fullscreen Edge-to-Edge Launch Screen (Fixes all letterbox/bezel scaling bugs) -->
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key>
+        <string></string>
+        <key>UIImageName</key>
+        <string></string>
+    </dict>
     
     <key>UIFileSharingEnabled</key>
     <true/>
@@ -28,7 +37,7 @@
     
     <!-- Local Network & Bonjour Discovery -->
     <key>NSLocalNetworkUsageDescription</key>
-    <string>PocketOllama exposes an OpenAI-compatible API to your laptop on your local Wi-Fi network.</string>
+    <string>PocketOllama serves an OpenAI-compatible API on your local Wi-Fi network.</string>
     
     <key>NSBonjourServices</key>
     <array>

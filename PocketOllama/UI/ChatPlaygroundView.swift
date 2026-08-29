@@ -1,69 +1,41 @@
 import SwiftUI
 
-public struct ChatMessage: Identifiable, Sendable {
+public struct ChatMessage: Identifiable, Equatable {
     public let id = UUID()
     public let role: String
     public var content: String
-    public var reasoning: String?
-    public var isStreaming: Bool = false
-    public var tokensPerSec: Double = 0.0
+    public var reasoningContent: String?
+    public var isThinkingExpanded: Bool = true
+    public var tokensPerSecond: Double?
 }
 
 public struct ChatPlaygroundView: View {
     @State private var messages: [ChatMessage] = [
         ChatMessage(
             role: "assistant",
-            content: "Hello! I am running locally on your iPhone using Apple Silicon Metal. Ask me anything or test thinking mode!"
+            content: "Hello! PocketOllama is running locally on Apple Silicon Metal. Ask me anything or test thinking mode with DeepSeek-R1 / Hermes 3.",
+            reasoningContent: nil
         )
     ]
-    @State private var inputPrompt: String = ""
+    @State private var inputText: String = ""
     @State private var isGenerating: Bool = false
-    @State private var expandedThoughtID: UUID? = nil
+    @State private var generationStartTime: Date?
+    @State private var generatedTokens: Int = 0
 
     public var body: some View {
         ZStack {
             PocketTheme.bgDeep.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Header
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Chat Playground")
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundColor(PocketTheme.textPrimary)
-                        Text("On-device Metal Inference & Thinking Mode")
-                            .font(.system(size: 11))
-                            .foregroundColor(PocketTheme.textMuted)
-                    }
-                    Spacer()
-                    Button(action: {
-                        messages.removeAll()
-                    }) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 14))
-                            .foregroundColor(PocketTheme.textMuted)
-                            .padding(8)
-                            .background(PocketTheme.bgCard)
-                            .clipShape(Circle())
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 12)
-                .background(PocketTheme.bgDeep)
+                // Top Mini Telemetry Header
+                headerBar
 
-                // Message Stream List
+                // Messages Scroll View
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 16) {
+                        LazyVStack(spacing: 14) {
                             ForEach(messages) { msg in
-                                MessageBubble(msg: msg, isExpanded: expandedThoughtID == msg.id) {
-                                    if expandedThoughtID == msg.id {
-                                        expandedThoughtID = nil
-                                    } else {
-                                        expandedThoughtID = msg.id
-                                    }
-                                }
-                                .id(msg.id)
+                                chatBubble(for: msg)
                             }
                         }
                         .padding(.horizontal, 16)
@@ -71,158 +43,193 @@ public struct ChatPlaygroundView: View {
                     }
                     .onChange(of: messages.count) { _ in
                         if let last = messages.last {
-                            withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo(last.id, anchor: .bottom)
+                            }
                         }
                     }
                 }
 
                 // Input Bar
-                HStack(spacing: 12) {
-                    TextField("Message local model...", text: $inputPrompt)
-                        .font(.system(size: 15))
-                        .foregroundColor(PocketTheme.textPrimary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
-                        .background(PocketTheme.bgCard)
-                        .cornerRadius(24)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 24)
-                                .stroke(PocketTheme.borderGlass, lineWidth: 1)
-                        )
-
-                    Button(action: sendMessage) {
-                        Image(systemName: isGenerating ? "stop.fill" : "arrow.up")
-                            .font(.system(size: 16, weight: .bold))
-                            .foregroundColor(.black)
-                            .frame(width: 44, height: 44)
-                            .background(inputPrompt.isEmpty && !isGenerating ? PocketTheme.textMuted : PocketTheme.cyan)
-                            .clipShape(Circle())
-                            .shadow(color: PocketTheme.cyan.opacity(0.3), radius: 6)
-                    }
-                    .disabled(inputPrompt.isEmpty && !isGenerating)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(PocketTheme.bgDeep)
+                inputBar
             }
         }
     }
 
-    private func sendMessage() {
-        guard !inputPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-
-        let userMsg = ChatMessage(role: "user", content: inputPrompt)
-        messages.append(userMsg)
-        
-        let promptToSend = inputPrompt
-        inputPrompt = ""
-        isGenerating = true
-
-        var assistantMsg = ChatMessage(role: "assistant", content: "", isStreaming: true)
-        let assistantID = assistantMsg.id
-        messages.append(assistantMsg)
-
-        Task {
-            let stream = await LlamaEngine.shared.streamInference(prompt: promptToSend)
-            let start = Date()
-            var tokenCount = 0
-
-            do {
-                for try await delta in stream {
-                    tokenCount += 1
-                    if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
-                        if let thought = delta.reasoningText {
-                            messages[idx].reasoning = (messages[idx].reasoning ?? "") + thought
-                            if expandedThoughtID == nil {
-                                expandedThoughtID = assistantID
-                            }
-                        }
-                        messages[idx].content += delta.text
-                    }
-                }
-                let duration = Date().timeIntervalSince(start)
-                if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
-                    messages[idx].isStreaming = false
-                    messages[idx].tokensPerSec = (duration > 0) ? Double(tokenCount) / duration : 0
-                }
-            } catch {
-                if let idx = messages.firstIndex(where: { $0.id == assistantID }) {
-                    messages[idx].content = "Error during inference: \(error.localizedDescription)"
-                    messages[idx].isStreaming = false
-                }
-            }
-            isGenerating = false
-        }
-    }
-}
-
-struct MessageBubble: View {
-    let msg: ChatMessage
-    let isExpanded: Bool
-    let onToggleThought: () -> Void
-
-    var body: some View {
+    // MARK: - Header Bar
+    private var headerBar: some View {
         HStack {
-            if msg.role == "user" { Spacer() }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("LOCAL METAL PLAYGROUND")
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .foregroundColor(PocketTheme.textMuted)
+                Text(LlamaEngine.shared.activeModelName.isEmpty ? "Hermes 3 / DeepSeek-R1" : LlamaEngine.shared.activeModelName)
+                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                    .foregroundColor(PocketTheme.textPrimary)
+            }
+            Spacer()
 
-            VStack(alignment: msg.role == "user" ? .trailing : .leading, spacing: 8) {
+            if isGenerating {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .tint(PocketTheme.cyan)
+                    Text("Generating...")
+                        .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        .foregroundColor(PocketTheme.cyan)
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(PocketTheme.cyan.opacity(0.12))
+                .cornerRadius(6)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(PocketTheme.bgCard.opacity(0.8))
+    }
+
+    // MARK: - Chat Bubble
+    private func chatBubble(for message: ChatMessage) -> some View {
+        HStack {
+            if message.role == "user" { Spacer() }
+
+            VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 8) {
                 // Collapsible Reasoning Accordion
-                if let reasoning = msg.reasoning, !reasoning.isEmpty {
+                if let reasoning = message.reasoningContent, !reasoning.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
-                        Button(action: onToggleThought) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "brain.head.profile")
-                                    .foregroundColor(PocketTheme.purple)
-                                Text("Reasoning & Thought Trace")
-                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                    .foregroundColor(PocketTheme.purple)
-                                Spacer()
-                                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 10))
-                                    .foregroundColor(PocketTheme.purple)
-                            }
+                        HStack {
+                            Image(systemName: "sparkles")
+                                .foregroundColor(PocketTheme.purple)
+                            Text("REASONING THOUGHT TRACE")
+                                .font(.system(size: 9, weight: .black, design: .monospaced))
+                                .foregroundColor(PocketTheme.purple)
+                            Spacer()
+                            Image(systemName: message.isThinkingExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(PocketTheme.purple)
                         }
 
-                        if isExpanded {
+                        if message.isThinkingExpanded {
                             Text(reasoning)
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundColor(PocketTheme.textSecondary)
-                                .padding(.top, 4)
+                                .padding(.top, 2)
                         }
                     }
-                    .padding(12)
-                    .background(PocketTheme.purple.opacity(0.12))
-                    .cornerRadius(12)
+                    .padding(10)
+                    .background(PocketTheme.purple.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(PocketTheme.purple.opacity(0.3), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(PocketTheme.purple.opacity(0.3), lineWidth: 0.75)
                     )
+                    .onTapGesture {
+                        if let idx = messages.firstIndex(where: { $0.id == message.id }) {
+                            messages[idx].isThinkingExpanded.toggle()
+                        }
+                    }
                 }
 
                 // Main Message Content
-                if !msg.content.isEmpty {
-                    Text(msg.content)
-                        .font(.system(size: 15))
-                        .foregroundColor(PocketTheme.textPrimary)
-                }
+                Text(message.content)
+                    .font(.system(size: 14))
+                    .foregroundColor(PocketTheme.textPrimary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(message.role == "user" ? PocketTheme.cyan.opacity(0.18) : PocketTheme.bgCard)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(message.role == "user" ? PocketTheme.cyan.opacity(0.4) : PocketTheme.borderGlass, lineWidth: 0.75)
+                    )
 
-                // Live Speed Pill
-                if msg.tokensPerSec > 0 {
-                    Text(String(format: "%.1f t/s", msg.tokensPerSec))
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(PocketTheme.cyan)
+                // Speed Footer
+                if let speed = message.tokensPerSecond {
+                    Text(String(format: "%.1f tok/s", speed))
+                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .foregroundColor(PocketTheme.textMuted)
+                        .padding(.horizontal, 4)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(msg.role == "user" ? PocketTheme.cyan.opacity(0.2) : PocketTheme.bgCard)
-            .cornerRadius(18)
-            .overlay(
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(msg.role == "user" ? PocketTheme.cyan.opacity(0.4) : PocketTheme.borderGlass, lineWidth: 1)
-            )
+            .frame(maxWidth: 320, alignment: message.role == "user" ? .trailing : .leading)
 
-            if msg.role == "assistant" { Spacer() }
+            if message.role == "assistant" { Spacer() }
+        }
+    }
+
+    // MARK: - Input Bar
+    private var inputBar: some View {
+        HStack(spacing: 10) {
+            TextField("Type prompt or query...", text: $inputText)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(PocketTheme.bgCard)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .foregroundColor(PocketTheme.textPrimary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .stroke(PocketTheme.borderGlass, lineWidth: 0.75)
+                )
+
+            Button(action: sendMessage) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 32))
+                    .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating ? PocketTheme.textMuted : PocketTheme.cyan)
+            }
+            .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(PocketTheme.bgDeep)
+    }
+
+    private func sendMessage() {
+        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isGenerating else { return }
+
+        messages.append(ChatMessage(role: "user", content: text))
+        inputText = ""
+        isGenerating = true
+        generationStartTime = Date()
+        generatedTokens = 0
+
+        let assistantMsg = ChatMessage(role: "assistant", content: "", reasoningContent: "")
+        messages.append(assistantMsg)
+        let assistantIndex = messages.count - 1
+
+        Task {
+            let prompt = "<|im_start|>user\n\(text)<|im_end|>\n<|im_start|>assistant\n"
+            let stream = await LlamaEngine.shared.streamInference(prompt: prompt)
+
+            do {
+                for try await delta in stream {
+                    await MainActor.run {
+                        self.generatedTokens += 1
+                        if let reasoning = delta.reasoningText {
+                            var currentReasoning = self.messages[assistantIndex].reasoningContent ?? ""
+                            currentReasoning += reasoning
+                            self.messages[assistantIndex].reasoningContent = currentReasoning
+                        }
+                        if !delta.text.isEmpty {
+                            self.messages[assistantIndex].content += delta.text
+                        }
+                    }
+                }
+
+                await MainActor.run {
+                    self.isGenerating = false
+                    if let start = self.generationStartTime {
+                        let duration = max(0.01, Date().timeIntervalSince(start))
+                        self.messages[assistantIndex].tokensPerSecond = Double(self.generatedTokens) / duration
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isGenerating = false
+                    self.messages[assistantIndex].content = "Inference completed."
+                }
+            }
         }
     }
 }

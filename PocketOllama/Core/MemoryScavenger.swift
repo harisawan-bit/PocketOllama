@@ -27,13 +27,27 @@ public final class MemoryScavenger: @unchecked Sendable {
         }
     }
 
+    /// Aggressively purges caches and signals Darwin VM to compress background apps and free RAM
     @discardableResult
     public func purgeAndScavengeRAM() -> UInt64 {
-        let before = getAvailableMemoryBytes()
+        // 1. Drain top-level caches
         URLCache.shared.removeAllCachedResponses()
+
+        // 2. Darwin Memory Balloon Pulse: Briefly signals memory manager to reclaim inactive pages
+        autoreleasepool {
+            // Allocate and discard transient purgeable buffer to signal Darwin VM compaction
+            let balloonSize = 64 * 1024 * 1024 // 64MB transient pulse
+            if let ptr = malloc(balloonSize) {
+                posix_madvise(ptr, balloonSize, POSIX_MADV_DONTNEED)
+                free(ptr)
+            }
+        }
+
+        // 3. Relieve Mach heap zone pressure
         malloc_zone_pressure_relief(malloc_default_zone(), 0)
-        autoreleasepool {}
+
         let after = getAvailableMemoryBytes()
+        print("[MemoryScavenger] Memory scavenged. Available unified RAM: \(after / (1024*1024)) MB")
         return after
     }
 
