@@ -2,7 +2,7 @@ name: Build & Release iOS IPA (PocketOllama)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
     tags: [ "v*" ]
   workflow_dispatch:
 
@@ -23,24 +23,17 @@ jobs:
           sudo xcode-select -switch /Applications/Xcode_15.4.app/Contents/Developer
           xcodebuild -version
 
-      - name: Cache SPM / Build Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            .build
-            ~/Library/Developer/Xcode/DerivedData
-          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.swift') }}
-          restore-keys: |
-            ${{ runner.os }}-spm-
+      - name: Install xcodegen
+        run: brew install xcodegen
 
-      - name: Create Build Directories
-        run: |
-          mkdir -p build/Payload
+      - name: Generate Xcode Project
+        run: xcodegen generate
 
-      - name: Build Archive (Unsigned for Sideloading / AltStore / Sideloadly)
+      - name: Build Archive (Unsigned for Sideloading)
         run: |
           xcodebuild build \
-            -scheme "PocketOllama" \
+            -project PocketOllama.xcodeproj \
+            -scheme PocketOllama \
             -destination "generic/platform=iOS" \
             -configuration Release \
             -derivedDataPath build/DerivedData \
@@ -50,8 +43,9 @@ jobs:
             GCC_PREPROCESSOR_DEFINITIONS="GGML_USE_METAL=1 SWIFT_PACKAGE=1" \
             OTHER_SWIFT_FLAGS="-D GGML_USE_METAL"
 
-      - name: Package App into .IPA
+      - name: Package App into Sideloadable .IPA
         run: |
+          mkdir -p build/Payload
           APP_PATH=$(find build/DerivedData -name "PocketOllama.app" -type d | head -n 1)
           if [ -z "$APP_PATH" ]; then
             echo "Error: PocketOllama.app not found in DerivedData"
@@ -71,10 +65,12 @@ jobs:
           path: build/PocketOllama.ipa
           retention-days: 30
 
-      - name: Publish GitHub Release (On Tag Push)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: "v2.0.${{ github.run_number }}"
+          name: "PocketOllama iOS v2.0.${{ github.run_number }}"
           files: build/PocketOllama.ipa
           draft: false
           prerelease: false
