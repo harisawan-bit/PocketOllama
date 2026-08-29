@@ -12,7 +12,7 @@ public struct MemoryBudgetResult: Sendable {
 public final class JetsamShield: @unchecked Sendable {
     public static let shared = JetsamShield()
 
-    private let safetyMarginBytes: UInt64 = 350 * 1024 * 1024
+    private let safetyMarginBytes: UInt64 = 300 * 1024 * 1024 // 300MB buffer for iOS kernel
 
     private init() {}
 
@@ -23,22 +23,25 @@ public final class JetsamShield: @unchecked Sendable {
     ) -> MemoryBudgetResult {
         let availableRAM = MemoryScavenger.shared.purgeAndScavengeRAM()
 
-        let bytesPerToken: Double = (kvQuant == "q4_0") ? 512.0 : 1024.0
-        let kvCacheBytes = UInt64(Double(requestedContextTokens) * bytesPerToken * 32.0)
+        // Real KV cache calculation per token:
+        // For ~3B model: 28 layers * 8 kv heads * 128 head dim * 0.5625 (Q4_0) * 2 (K+V) = ~32 KB per token
+        // For ~8B model: 32 layers * 8 kv heads * 128 head dim * 0.5625 (Q4_0) * 2 (K+V) = ~36 KB per token
+        let bytesPerToken: Double = (kvQuant.lowercased() == "q4_0") ? 36864.0 : 73728.0
+        let kvCacheBytes = UInt64(Double(requestedContextTokens) * bytesPerToken)
 
         let totalRequired = modelFileSizeBytes + kvCacheBytes + safetyMarginBytes
-        let isSafe = availableRAM > totalRequired
+        let isSafe = availableRAM > (modelFileSizeBytes + safetyMarginBytes)
 
         let availableForKV = (availableRAM > (modelFileSizeBytes + safetyMarginBytes)) ? (availableRAM - modelFileSizeBytes - safetyMarginBytes) : 0
-        let maxSafeTokens = Int(Double(availableForKV) / (bytesPerToken * 32.0))
+        let maxSafeTokens = Int(Double(availableForKV) / bytesPerToken)
 
-        let errorMsg: String? = isSafe ? nil : "Insufficient memory: Required \(totalRequired / (1024*1024))MB, Available \(availableRAM / (1024*1024))MB."
+        let errorMsg: String? = isSafe ? nil : "Insufficient memory: Model requires \(modelFileSizeBytes / (1024*1024))MB, but only \(availableRAM / (1024*1024))MB available."
 
         return MemoryBudgetResult(
             isSafe: isSafe,
             availableRAMBytes: availableRAM,
             requiredRAMBytes: totalRequired,
-            safeMaxContextTokens: max(1024, maxSafeTokens),
+            safeMaxContextTokens: max(2048, (maxSafeTokens / 1024) * 1024),
             suggestedKVQuant: (availableRAM < 4 * 1024 * 1024 * 1024) ? "q4_0" : "q8_0",
             errorMessage: errorMsg
         )
@@ -59,7 +62,7 @@ public final class JetsamShield: @unchecked Sendable {
         let prefix = String(prompt[..<prefixIndex])
         let suffix = String(prompt[suffixIndex...])
 
-        let compacted = "\(prefix)\n\n[... Warning: Context compacted by Middle-Out Shield ...]\n\n\(suffix)"
+        let compacted = "\(prefix)\n\n[... Context compacted by Middle-Out Shield ...]\n\n\(suffix)"
         return (compacted, true)
     }
 }

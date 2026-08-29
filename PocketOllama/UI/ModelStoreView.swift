@@ -8,6 +8,7 @@ public struct LocalModelItem: Identifiable {
     public let parameterSize: String
     public let recommendedContext: String
     public let downloadURL: String?
+    public var filePath: String?
     public var isDownloaded: Bool
     public var isLoaded: Bool
 }
@@ -24,6 +25,7 @@ public struct ModelStoreView: View {
             parameterSize: "1.5B",
             recommendedContext: "Up to 64k Tokens",
             downloadURL: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
+            filePath: nil,
             isDownloaded: false,
             isLoaded: false
         ),
@@ -34,6 +36,7 @@ public struct ModelStoreView: View {
             parameterSize: "0.5B",
             recommendedContext: "Up to 128k - 256k Tokens",
             downloadURL: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            filePath: nil,
             isDownloaded: false,
             isLoaded: false
         ),
@@ -44,6 +47,7 @@ public struct ModelStoreView: View {
             parameterSize: "3.2B",
             recommendedContext: "Up to 32k Tokens",
             downloadURL: "https://huggingface.co/NousResearch/Hermes-3-Llama-3.2-3B-GGUF/resolve/main/Hermes-3-Llama-3.2-3B.Q4_K_M.gguf",
+            filePath: nil,
             isDownloaded: false,
             isLoaded: false
         ),
@@ -54,12 +58,16 @@ public struct ModelStoreView: View {
             parameterSize: "8.0B",
             recommendedContext: "Up to 16k Tokens",
             downloadURL: "https://huggingface.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF/resolve/main/Hermes-3-Llama-3.1-8B.Q4_K_M.gguf",
+            filePath: nil,
             isDownloaded: false,
             isLoaded: false
         )
     ]
 
+    @State private var customModels: [LocalModelItem] = []
     @State private var showingFileImporter = false
+    @State private var loadErrorMessage: String? = nil
+    @State private var isLoadingModel: Bool = false
 
     public var body: some View {
         ZStack {
@@ -70,9 +78,42 @@ public struct ModelStoreView: View {
                     // Header Bar
                     headerBar
 
-                    // Model Cards List
+                    if let err = loadErrorMessage {
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundColor(PocketTheme.roseAlert)
+                            Text(err)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(PocketTheme.roseAlert)
+                            Spacer()
+                            Button("Dismiss") { loadErrorMessage = nil }
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .foregroundColor(PocketTheme.textMuted)
+                        }
+                        .padding(10)
+                        .background(PocketTheme.roseAlert.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+
+                    // Preset Models List
                     ForEach(models) { item in
-                        modelCard(for: item)
+                        modelCard(for: item, isCustom: false)
+                    }
+
+                    // Custom Models from Disk
+                    if !customModels.isEmpty {
+                        HStack {
+                            Text("IMPORTED & SIDELOADED MODELS")
+                                .font(.system(size: 10, weight: .black, design: .monospaced))
+                                .foregroundColor(PocketTheme.textMuted)
+                            Spacer()
+                        }
+                        .padding(.top, 8)
+                        .padding(.horizontal, 4)
+
+                        ForEach(customModels) { item in
+                            modelCard(for: item, isCustom: true)
+                        }
                     }
 
                     // Import Custom GGUF Card
@@ -93,11 +134,11 @@ public struct ModelStoreView: View {
                 guard let url = urls.first else { return }
                 importCustomGGUF(url: url)
             case .failure(let err):
-                print("Import failed: \(err)")
+                loadErrorMessage = "File import error: \(err.localizedDescription)"
             }
         }
         .onAppear {
-            checkExistingModelsOnDisk()
+            scanModelsOnDisk()
         }
     }
 
@@ -107,16 +148,27 @@ public struct ModelStoreView: View {
                 Text("LOCAL MODEL REPOSITORY")
                     .font(.system(size: 10, weight: .black, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
-                Text("Pre-Tuned Apple Silicon GGUF Models")
+                Text("Zero-Copy GGUF Engine")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundColor(PocketTheme.textPrimary)
             }
             Spacer()
+
+            Button(action: {
+                scanModelsOnDisk()
+            }) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundColor(PocketTheme.devCyan)
+                    .padding(6)
+                    .background(PocketTheme.bgSurface)
+                    .clipShape(Circle())
+            }
         }
         .padding(.horizontal, 4)
     }
 
-    private func modelCard(for item: LocalModelItem) -> some View {
+    private func modelCard(for item: LocalModelItem, isCustom: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -172,17 +224,22 @@ public struct ModelStoreView: View {
                         Button(action: {
                             loadModel(item)
                         }) {
-                            Text(item.isLoaded ? "Reload into Metal" : "Load into RAM")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .background(PocketTheme.bgSurfaceHover)
-                                .foregroundColor(PocketTheme.devCyan)
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .stroke(PocketTheme.borderSubtle, lineWidth: 1)
-                                )
+                            HStack(spacing: 4) {
+                                if isLoadingModel && item.isLoaded {
+                                    ProgressView().scaleEffect(0.6).tint(PocketTheme.devCyan)
+                                }
+                                Text(item.isLoaded ? "Active in RAM" : "Load into RAM (<50ms)")
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(item.isLoaded ? PocketTheme.terminalGreen.opacity(0.15) : PocketTheme.bgSurfaceHover)
+                            .foregroundColor(item.isLoaded ? PocketTheme.terminalGreen : PocketTheme.devCyan)
+                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .stroke(item.isLoaded ? PocketTheme.terminalGreen.opacity(0.4) : PocketTheme.borderSubtle, lineWidth: 1)
+                            )
                         }
 
                         Button(action: {
@@ -237,7 +294,7 @@ public struct ModelStoreView: View {
                     Text("Import Custom GGUF File")
                         .font(.system(size: 12, weight: .bold, design: .monospaced))
                         .foregroundColor(PocketTheme.textPrimary)
-                    Text("Directly import any .gguf file from Files app or iCloud")
+                    Text("Import from Files, iCloud, or iTunes File Sharing")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(PocketTheme.textMuted)
                 }
@@ -251,59 +308,116 @@ public struct ModelStoreView: View {
         }
     }
 
-    private func checkExistingModelsOnDisk() {
+    private func scanModelsOnDisk() {
         let modelsDir = downloader.getModelsDirectory()
         let fm = FileManager.default
 
+        // 1. Check preset models
         for idx in models.indices {
             let fileURL = modelsDir.appendingPathComponent("\(models[idx].id).gguf")
-            models[idx].isDownloaded = fm.fileExists(atPath: fileURL.path)
+            let exists = fm.fileExists(atPath: fileURL.path)
+            models[idx].isDownloaded = exists
+            models[idx].filePath = exists ? fileURL.path : nil
         }
+
+        // 2. Scan for any custom/sideloaded .gguf files in Documents/models and Documents/
+        var discovered: [LocalModelItem] = []
+        let presetIDs = Set(models.map { "\($0.id).gguf" })
+
+        let scanDirs = [modelsDir, fm.urls(for: .documentDirectory, in: .userDomainMask)[0]]
+        for dir in scanDirs {
+            if let files = try? fm.contentsOfDirectory(atPath: dir.path) {
+                for file in files where file.hasSuffix(".gguf") && !presetIDs.contains(file) {
+                    let fullPath = dir.appendingPathComponent(file).path
+                    let meta = GGUFHeaderParser.shared.inspectGGUF(at: fullPath)
+                    discovered.append(LocalModelItem(
+                        id: file,
+                        name: file,
+                        sizeDescription: "\(meta.fileSizeBytes / (1024*1024)) MB",
+                        parameterSize: String(format: "%.1fB", meta.estimatedParamCountBillion),
+                        recommendedContext: "Max \(meta.contextLengthTrained) Tok",
+                        downloadURL: nil,
+                        filePath: fullPath,
+                        isDownloaded: true,
+                        isLoaded: false
+                    ))
+                }
+            }
+        }
+
+        self.customModels = discovered
     }
 
     private func loadModel(_ item: LocalModelItem) {
-        for idx in models.indices {
-            models[idx].isLoaded = (models[idx].id == item.id)
-        }
+        loadErrorMessage = nil
+        isLoadingModel = true
 
         let modelsDir = downloader.getModelsDirectory()
-        let fileURL = modelsDir.appendingPathComponent("\(item.id).gguf")
-        
-        let path = fileURL.path
+        let path: String
+        if let explicitPath = item.filePath, FileManager.default.fileExists(atPath: explicitPath) {
+            path = explicitPath
+        } else {
+            path = modelsDir.appendingPathComponent("\(item.id).gguf").path
+        }
+
+        guard FileManager.default.fileExists(atPath: path) else {
+            loadErrorMessage = "File not found at: \(path)"
+            isLoadingModel = false
+            return
+        }
+
         let meta = GGUFHeaderParser.shared.inspectGGUF(at: path)
         config.updateForModel(metadata: meta)
 
         Task {
-            try? await LlamaEngine.shared.loadModel(path: path)
+            do {
+                try await LlamaEngine.shared.loadModel(path: path)
+                await MainActor.run {
+                    for idx in self.models.indices {
+                        self.models[idx].isLoaded = (self.models[idx].id == item.id)
+                    }
+                    for idx in self.customModels.indices {
+                        self.customModels[idx].isLoaded = (self.customModels[idx].id == item.id)
+                    }
+                    self.isLoadingModel = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.loadErrorMessage = "Load Error: \(error.localizedDescription)"
+                    self.isLoadingModel = false
+                }
+            }
         }
     }
 
     private func deleteModel(_ item: LocalModelItem) {
-        let modelsDir = downloader.getModelsDirectory()
-        let fileURL = modelsDir.appendingPathComponent("\(item.id).gguf")
-        try? FileManager.default.removeItem(at: fileURL)
-        checkExistingModelsOnDisk()
+        let path = item.filePath ?? downloader.getModelsDirectory().appendingPathComponent("\(item.id).gguf").path
+        try? FileManager.default.removeItem(atPath: path)
+        scanModelsOnDisk()
     }
 
     private func importCustomGGUF(url: URL) {
-        guard url.startAccessingSecurityScopedResource() else { return }
+        guard url.startAccessingSecurityScopedResource() else {
+            loadErrorMessage = "Failed to access security-scoped file."
+            return
+        }
         defer { url.stopAccessingSecurityScopedResource() }
 
         let fileName = url.lastPathComponent
-        let meta = GGUFHeaderParser.shared.inspectGGUF(at: url.path)
+        let destURL = downloader.getModelsDirectory().appendingPathComponent(fileName)
 
-        let newItem = LocalModelItem(
-            id: url.path,
-            name: fileName,
-            sizeDescription: "\(meta.fileSizeBytes / (1024*1024)) MB",
-            parameterSize: String(format: "%.1fB", meta.estimatedParamCountBillion),
-            recommendedContext: "Max \(meta.contextLengthTrained) Tok",
-            downloadURL: nil,
-            isDownloaded: true,
-            isLoaded: true
-        )
+        do {
+            if FileManager.default.fileExists(atPath: destURL.path) {
+                try FileManager.default.removeItem(at: destURL)
+            }
+            try FileManager.default.copyItem(at: url, to: destURL)
+            scanModelsOnDisk()
 
-        models.insert(newItem, at: 0)
-        loadModel(newItem)
+            if let imported = customModels.first(where: { $0.id == fileName }) {
+                loadModel(imported)
+            }
+        } catch {
+            loadErrorMessage = "Error copying custom GGUF: \(error.localizedDescription)"
+        }
     }
 }
