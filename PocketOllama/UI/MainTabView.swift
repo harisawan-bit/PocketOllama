@@ -4,10 +4,9 @@ public struct MainTabView: View {
     @State private var selectedTab: Int = 0
 
     init() {
-        // Configure native iOS TabBar appearance to transparent dark glass
         let appearance = UITabBarAppearance()
         appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(red: 0.04, green: 0.05, blue: 0.09, alpha: 0.95)
+        appearance.backgroundColor = UIColor(red: 0.03, green: 0.04, blue: 0.06, alpha: 1.0)
         appearance.shadowColor = UIColor.white.withAlphaComponent(0.08)
 
         UITabBar.appearance().standardAppearance = appearance
@@ -24,16 +23,16 @@ public struct MainTabView: View {
 
             ChatPlaygroundView()
                 .tabItem {
-                    Label("Playground", systemImage: "bubble.left.and.bubble.right.fill")
+                    Label("Terminal", systemImage: "terminal.fill")
                 }
                 .tag(1)
 
             ModelStoreView()
                 .tabItem {
-                    Label("Model Hub", systemImage: "cube.box.fill")
+                    Label("Models", systemImage: "folder.fill")
                 }
                 .tag(2)
         }
-        .accentColor(PocketTheme.cyan)
+        .accentColor(PocketTheme.devCyan)
     }
 }

@@ -1,55 +1,44 @@
 import SwiftUI
 
 public enum PocketTheme {
-    // Deep Midnight OLED Bases
-    public static let bgDeep = Color(red: 0.02, green: 0.03, blue: 0.06)      // #05080F
-    public static let bgCard = Color(red: 0.06, green: 0.08, blue: 0.14)      // #0F1424
-    public static let bgCardHover = Color(red: 0.09, green: 0.12, blue: 0.20) // #171E33
-    public static let borderGlass = Color.white.opacity(0.06)
+    // True Industrial Dark Palette (No superficial gradients)
+    public static let bgDeep = Color(red: 0.00, green: 0.00, blue: 0.00)       // #000000 True OLED Jet Black
+    public static let bgSurface = Color(red: 0.05, green: 0.06, blue: 0.08)    // #0D0F14 Carbon Charcoal
+    public static let bgSurfaceHover = Color(red: 0.09, green: 0.10, blue: 0.13) // #171A21
+    public static let borderSubtle = Color(red: 0.16, green: 0.18, blue: 0.22) // #292E38 Zinc Border
+    public static let borderFocus = Color(red: 0.25, green: 0.28, blue: 0.35)
     
-    // Vibrant Cyber & AI Accents
-    public static let cyan = Color(red: 0.00, green: 0.94, blue: 1.00)        // #00F0FF (Primary AI)
-    public static let emerald = Color(red: 0.00, green: 1.00, blue: 0.53)     // #00FF88 (Active / Online)
-    public static let purple = Color(red: 0.65, green: 0.40, blue: 1.00)      // #A666FF (Reasoning / Thinking)
-    public static let amber = Color(red: 1.00, green: 0.72, blue: 0.00)       // #FFB800 (Warning / Throttle)
-    public static let rose = Color(red: 1.00, green: 0.20, blue: 0.40)        // #FF3366 (Danger / Stop)
+    // Industrial Status Accents
+    public static let terminalGreen = Color(red: 0.13, green: 0.77, blue: 0.36) // #22C55E Online / Active
+    public static let amberWarning = Color(red: 0.96, green: 0.62, blue: 0.04)  // #F59E0B Throttled / Compiling
+    public static let roseAlert = Color(red: 0.94, green: 0.27, blue: 0.27)     // #EF4444 Error / Stopped
+    public static let devCyan = Color(red: 0.22, green: 0.74, blue: 0.97)       // #38BDF8 Precision Metric
+    public static let devIndigo = Color(red: 0.50, green: 0.55, blue: 0.99)     // #818CF8 Reasoning Trace
     
-    // Typography Colors
-    public static let textPrimary = Color.white
-    public static let textSecondary = Color(red: 0.65, green: 0.70, blue: 0.82)
-    public static let textMuted = Color(red: 0.40, green: 0.45, blue: 0.58)
-    
-    // Gradients
-    public static let cyanPurpleGradient = LinearGradient(
-        colors: [cyan, purple],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
-
-    public static let roseGradient = LinearGradient(
-        colors: [rose, Color(red: 0.8, green: 0.1, blue: 0.3)],
-        startPoint: .topLeading,
-        endPoint: .bottomTrailing
-    )
+    // High-Legibility Typography Colors
+    public static let textPrimary = Color(red: 0.96, green: 0.96, blue: 0.97)   // #F4F4F5
+    public static let textSecondary = Color(red: 0.63, green: 0.65, blue: 0.70) // #A1A7B3
+    public static let textMuted = Color(red: 0.40, green: 0.43, blue: 0.48)     // #666E7A
+    public static let textCode = Color(red: 0.85, green: 0.87, blue: 0.91)
 }
 
-public struct FluidGlassCard: ViewModifier {
-    public var cornerRadius: CGFloat = 20
-    public var borderColor: Color = PocketTheme.borderGlass
+public struct DevCardModifier: ViewModifier {
+    public var cornerRadius: CGFloat = 12
+    public var borderColor: Color = PocketTheme.borderSubtle
 
     public func body(content: Content) -> some View {
         content
-            .background(PocketTheme.bgCard)
+            .background(PocketTheme.bgSurface)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(borderColor, lineWidth: 0.75)
+                    .stroke(borderColor, lineWidth: 1.0)
             )
     }
 }
 
 public extension View {
-    func fluidGlass(cornerRadius: CGFloat = 20, borderColor: Color = PocketTheme.borderGlass) -> some View {
-        self.modifier(FluidGlassCard(cornerRadius: cornerRadius, borderColor: borderColor))
+    func devCard(cornerRadius: CGFloat = 12, borderColor: Color = PocketTheme.borderSubtle) -> some View {
+        self.modifier(DevCardModifier(cornerRadius: cornerRadius, borderColor: borderColor))
     }
 }

@@ -13,7 +13,7 @@ public struct ChatPlaygroundView: View {
     @State private var messages: [ChatMessage] = [
         ChatMessage(
             role: "assistant",
-            content: "Hello! PocketOllama is running locally on Apple Silicon Metal. Ask me anything or test thinking mode with DeepSeek-R1 / Hermes 3.",
+            content: "PocketOllama runtime initialized on Apple Silicon Metal GPU. Ready for inference or agent testing.",
             reasoningContent: nil
         )
     ]
@@ -27,23 +27,23 @@ public struct ChatPlaygroundView: View {
             PocketTheme.bgDeep.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                // Top Mini Telemetry Header
-                headerBar
+                // Top Terminal Header
+                topTerminalHeader
 
-                // Messages Scroll View
+                // Message Stream
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 14) {
+                        LazyVStack(spacing: 12) {
                             ForEach(messages) { msg in
                                 chatBubble(for: msg)
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 12)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
                     }
                     .onChange(of: messages.count) { _ in
                         if let last = messages.last {
-                            withAnimation(.easeOut(duration: 0.2)) {
+                            withAnimation(.easeOut(duration: 0.15)) {
                                 proxy.scrollTo(last.id, anchor: .bottom)
                             }
                         }
@@ -56,37 +56,43 @@ public struct ChatPlaygroundView: View {
         }
     }
 
-    // MARK: - Header Bar
-    private var headerBar: some View {
+    // MARK: - Top Terminal Header
+    private var topTerminalHeader: some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("LOCAL METAL PLAYGROUND")
-                    .font(.system(size: 10, weight: .black, design: .monospaced))
+            HStack(spacing: 6) {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 11))
+                    .foregroundColor(PocketTheme.devCyan)
+                Text("LOCAL INFERENCE TERMINAL")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
-                Text(LlamaEngine.shared.activeModelName.isEmpty ? "Hermes 3 / DeepSeek-R1" : LlamaEngine.shared.activeModelName)
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundColor(PocketTheme.textPrimary)
             }
             Spacer()
 
             if isGenerating {
                 HStack(spacing: 6) {
                     ProgressView()
-                        .scaleEffect(0.7)
-                        .tint(PocketTheme.cyan)
-                    Text("Generating...")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .foregroundColor(PocketTheme.cyan)
+                        .scaleEffect(0.6)
+                        .tint(PocketTheme.terminalGreen)
+                    Text("STREAMING")
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(PocketTheme.terminalGreen)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(PocketTheme.cyan.opacity(0.12))
-                .cornerRadius(6)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(PocketTheme.terminalGreen.opacity(0.12))
+                .cornerRadius(4)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(PocketTheme.bgCard.opacity(0.8))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(PocketTheme.bgSurface)
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundColor(PocketTheme.borderSubtle),
+            alignment: .bottom
+        )
     }
 
     // MARK: - Chat Bubble
@@ -94,35 +100,36 @@ public struct ChatPlaygroundView: View {
         HStack {
             if message.role == "user" { Spacer() }
 
-            VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 8) {
-                // Collapsible Reasoning Accordion
+            VStack(alignment: message.role == "user" ? .trailing : .leading, spacing: 6) {
+                // Collapsible Reasoning Thought Trace
                 if let reasoning = message.reasoningContent, !reasoning.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Image(systemName: "sparkles")
-                                .foregroundColor(PocketTheme.purple)
-                            Text("REASONING THOUGHT TRACE")
-                                .font(.system(size: 9, weight: .black, design: .monospaced))
-                                .foregroundColor(PocketTheme.purple)
+                            Image(systemName: "brain.head.profile")
+                                .font(.system(size: 10))
+                                .foregroundColor(PocketTheme.devIndigo)
+                            Text("THOUGHT TRACE / SCRATCHPAD")
+                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .foregroundColor(PocketTheme.devIndigo)
                             Spacer()
                             Image(systemName: message.isThinkingExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(PocketTheme.purple)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundColor(PocketTheme.devIndigo)
                         }
 
                         if message.isThinkingExpanded {
                             Text(reasoning)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.system(size: 11, design: .monospaced))
                                 .foregroundColor(PocketTheme.textSecondary)
                                 .padding(.top, 2)
                         }
                     }
-                    .padding(10)
-                    .background(PocketTheme.purple.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .padding(8)
+                    .background(PocketTheme.bgSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(PocketTheme.purple.opacity(0.3), lineWidth: 0.75)
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .stroke(PocketTheme.devIndigo.opacity(0.4), lineWidth: 1)
                     )
                     .onTapGesture {
                         if let idx = messages.firstIndex(where: { $0.id == message.id }) {
@@ -131,17 +138,17 @@ public struct ChatPlaygroundView: View {
                     }
                 }
 
-                // Main Message Content
+                // Message Text
                 Text(message.content)
-                    .font(.system(size: 14))
+                    .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(PocketTheme.textPrimary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(message.role == "user" ? PocketTheme.cyan.opacity(0.18) : PocketTheme.bgCard)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(message.role == "user" ? PocketTheme.bgSurfaceHover : PocketTheme.bgSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(message.role == "user" ? PocketTheme.cyan.opacity(0.4) : PocketTheme.borderGlass, lineWidth: 0.75)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(message.role == "user" ? PocketTheme.devCyan.opacity(0.4) : PocketTheme.borderSubtle, lineWidth: 1)
                     )
 
                 // Speed Footer
@@ -149,7 +156,7 @@ public struct ChatPlaygroundView: View {
                     Text(String(format: "%.1f tok/s", speed))
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundColor(PocketTheme.textMuted)
-                        .padding(.horizontal, 4)
+                        .padding(.horizontal, 2)
                 }
             }
             .frame(maxWidth: 320, alignment: message.role == "user" ? .trailing : .leading)
@@ -160,28 +167,35 @@ public struct ChatPlaygroundView: View {
 
     // MARK: - Input Bar
     private var inputBar: some View {
-        HStack(spacing: 10) {
-            TextField("Type prompt or query...", text: $inputText)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(PocketTheme.bgCard)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        HStack(spacing: 8) {
+            TextField("Enter prompt or query...", text: $inputText)
+                .font(.system(size: 13, design: .monospaced))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(PocketTheme.bgSurface)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .foregroundColor(PocketTheme.textPrimary)
                 .overlay(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(PocketTheme.borderGlass, lineWidth: 0.75)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(PocketTheme.borderSubtle, lineWidth: 1)
                 )
 
             Button(action: sendMessage) {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating ? PocketTheme.textMuted : PocketTheme.cyan)
+                    .font(.system(size: 28))
+                    .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating ? PocketTheme.textMuted : PocketTheme.devCyan)
             }
             .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
         .background(PocketTheme.bgDeep)
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundColor(PocketTheme.borderSubtle),
+            alignment: .top
+        )
     }
 
     private func sendMessage() {

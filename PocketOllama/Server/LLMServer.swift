@@ -9,6 +9,18 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
     @Published public private(set) var boundPort: Int32 = 11434
     @Published public private(set) var localIPAddress: String = "127.0.0.1"
 
+    public var formattedPort: String {
+        return String(format: "%d", boundPort)
+    }
+
+    public var apiEndpointURL: String {
+        return "http://\(localIPAddress):\(formattedPort)/v1"
+    }
+
+    public var ollamaEndpointURL: String {
+        return "http://\(localIPAddress):\(formattedPort)"
+    }
+
     private var listener: NWListener?
     private let serverQueue = DispatchQueue(label: "com.pocketollama.server", qos: .userInteractive)
 
@@ -45,6 +57,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                     self.isRunning = true
                     self.boundPort = actualPort
                     BonjourAdvertiser.shared.startAdvertising(port: actualPort)
+                    RequestLogger.shared.log(method: "SYSTEM", path: "Server started on \(self.apiEndpointURL)", statusCode: 200)
                 }
             } else if case .failed = state {
                 self.stop()
@@ -65,6 +78,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         BonjourAdvertiser.shared.stopAdvertising()
         DispatchQueue.main.async {
             self.isRunning = false
+            RequestLogger.shared.log(method: "SYSTEM", path: "Server stopped", statusCode: 200)
         }
     }
 
@@ -108,10 +122,15 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             }
             """
             sendJSON(connection: connection, json: json)
+            RequestLogger.shared.log(method: method, path: path, statusCode: 200)
         } else if path.starts(with: "/v1/chat/completions") && method == "POST" {
             await handleChat(reqStr: reqStr, connection: connection)
+        } else if path == "/health" || path == "/v1/health" {
+            sendResponse(connection: connection, status: "200 OK", contentType: "application/json", body: "{\"status\": \"healthy\", \"runtime\": \"Metal\"}")
+            RequestLogger.shared.log(method: method, path: path, statusCode: 200)
         } else {
             sendResponse(connection: connection, status: "200 OK", contentType: "application/json", body: "{\"status\": \"healthy\", \"server\": \"PocketOllama\"}")
+            RequestLogger.shared.log(method: method, path: path, statusCode: 200)
         }
     }
 
@@ -120,6 +139,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         guard parts.count > 1, let bodyData = parts[1].data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] else {
             sendResponse(connection: connection, status: "400 Bad Request", contentType: "application/json", body: "{\"error\": \"Invalid JSON\"}")
+            RequestLogger.shared.log(method: "POST", path: "/v1/chat/completions", statusCode: 400)
             return
         }
 
@@ -158,8 +178,9 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                     connection.send(content: chunkJSON.data(using: .utf8), completion: .idempotent)
                 }
 
-                let duration = Date().timeIntervalSince(startTime)
+                let duration = max(0.001, Date().timeIntervalSince(startTime))
                 TelemetryManager.shared.recordTokensGenerated(count: tokenCount, durationSeconds: duration)
+                RequestLogger.shared.log(method: "POST", path: "/v1/chat/completions", statusCode: 200, tokensGenerated: tokenCount, durationSeconds: duration)
 
                 connection.send(content: "data: [DONE]\r\n\r\n".data(using: .utf8), completion: .contentProcessed({ _ in
                     connection.cancel()
@@ -187,6 +208,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             }
             """
             sendJSON(connection: connection, json: resp)
+            RequestLogger.shared.log(method: "POST", path: "/v1/chat/completions", statusCode: 200, tokensGenerated: 1, durationSeconds: 0.1)
         }
     }
 
@@ -222,12 +244,5 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         }
         freeifaddrs(ifaddr)
         return address
-    }
-}
-
-extension NWProtocolTCP.Options {
-    func then(_ closure: (NWProtocolTCP.Options) -> Void) -> NWProtocolTCP.Options {
-        closure(self)
-        return self
     }
 }
