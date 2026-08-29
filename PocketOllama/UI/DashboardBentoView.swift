@@ -6,9 +6,11 @@ public struct DashboardBentoView: View {
     @ObservedObject var thermal = ThermalGovernor.shared
     @ObservedObject var config = ConfigEngine.shared
     @ObservedObject var logger = RequestLogger.shared
+    @ObservedObject var benchmark = BenchmarkEngine.shared
 
     @State private var showingNightstand = false
     @State private var showingSettings = false
+    @State private var showingQRConnect = false
     @State private var copyNotification: String? = nil
 
     let hardware = HardwareAutoTuner.shared.detectProfile()
@@ -31,6 +33,9 @@ public struct DashboardBentoView: View {
                     // Active Model & Context Allocation HUD
                     modelContextHUD
 
+                    // On-Device Diagnostic Benchmark HUD
+                    benchmarkHUD
+
                     // Live HTTP Server Console
                     liveConsoleCard
 
@@ -47,6 +52,9 @@ public struct DashboardBentoView: View {
         }
         .sheet(isPresented: $showingSettings) {
             AdvancedSettingsView()
+        }
+        .sheet(isPresented: $showingQRConnect) {
+            QRConnectSheet(endpointURL: server.apiEndpointURL, hostname: config.serverHostname)
         }
     }
 
@@ -77,7 +85,7 @@ public struct DashboardBentoView: View {
     private var gatewayCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("API GATEWAY")
+                Text("API GATEWAY // HTTP & WEB CONSOLE")
                     .font(.system(size: 10, weight: .black, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
                 Spacer()
@@ -94,11 +102,17 @@ public struct DashboardBentoView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
 
-            // Quick Copy Strip
+            // Quick Copy & QR Strip
             HStack(spacing: 8) {
-                quickCopyButton(label: "Copy URL", text: server.apiEndpointURL)
-                quickCopyButton(label: "Copy cURL", text: "curl \(server.apiEndpointURL)/models")
-                quickCopyButton(label: "Copy Python", text: "client = OpenAI(base_url='\(server.apiEndpointURL)', api_key='pocketollama')")
+                quickActionButton(label: "QR Connect", icon: "qrcode") {
+                    showingQRConnect = true
+                }
+                quickActionButton(label: "Copy URL", icon: "doc.on.doc") {
+                    copyToClipboard(text: server.apiEndpointURL, label: "URL")
+                }
+                quickActionButton(label: "Copy cURL", icon: "terminal") {
+                    copyToClipboard(text: "curl \(server.apiEndpointURL)/models", label: "cURL")
+                }
             }
 
             // Server Start / Stop Toggle Button
@@ -134,14 +148,10 @@ public struct DashboardBentoView: View {
         .devCard(cornerRadius: 10)
     }
 
-    private func quickCopyButton(label: String, text: String) -> some View {
-        Button(action: {
-            UIPasteboard.general.string = text
-            copyNotification = "Copied \(label)"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copyNotification = nil }
-        }) {
+    private func quickActionButton(label: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: "doc.on.doc")
+                Image(systemName: icon)
                     .font(.system(size: 10))
                 Text(label)
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -156,6 +166,12 @@ public struct DashboardBentoView: View {
                     .stroke(PocketTheme.borderSubtle, lineWidth: 1)
             )
         }
+    }
+
+    private func copyToClipboard(text: String, label: String) {
+        UIPasteboard.general.string = text
+        copyNotification = "Copied \(label)"
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { copyNotification = nil }
     }
 
     // MARK: - Telemetry Grid
@@ -219,6 +235,76 @@ public struct DashboardBentoView: View {
         .devCard(cornerRadius: 10)
     }
 
+    // MARK: - On-Device Diagnostic Benchmark HUD
+    private var benchmarkHUD: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("ON-DEVICE HARDWARE BENCHMARK")
+                    .font(.system(size: 10, weight: .black, design: .monospaced))
+                    .foregroundColor(PocketTheme.textMuted)
+                Spacer()
+
+                Button(action: {
+                    Task {
+                        _ = await benchmark.runBenchmark()
+                    }
+                }) {
+                    HStack(spacing: 4) {
+                        if benchmark.isRunning {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                                .tint(PocketTheme.devCyan)
+                        } else {
+                            Image(systemName: "gauge.with.dots.needle.bottom.50percent")
+                        }
+                        Text(benchmark.isRunning ? "Testing..." : "Run Test")
+                    }
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(PocketTheme.devCyan.opacity(0.12))
+                    .foregroundColor(PocketTheme.devCyan)
+                    .cornerRadius(4)
+                }
+                .disabled(benchmark.isRunning)
+            }
+
+            if let res = benchmark.lastResult {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("TTFT")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(PocketTheme.textMuted)
+                        Text(String(format: "%.0f ms", res.ttftMs))
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundColor(PocketTheme.devCyan)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("THROUGHPUT")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(PocketTheme.textMuted)
+                        Text(String(format: "%.1f tok/s", res.tokensPerSecond))
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundColor(PocketTheme.terminalGreen)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("SOC RATING")
+                            .font(.system(size: 8, weight: .bold, design: .monospaced))
+                            .foregroundColor(PocketTheme.textMuted)
+                        Text(res.socName)
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundColor(PocketTheme.textPrimary)
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+        .padding(12)
+        .devCard(cornerRadius: 10)
+    }
+
     // MARK: - Live HTTP Server Console
     private var liveConsoleCard: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -240,7 +326,7 @@ public struct DashboardBentoView: View {
                 Text("Waiting for requests from client or playground...")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(logger.recentLogs.prefix(5)) { entry in
@@ -262,7 +348,7 @@ public struct DashboardBentoView: View {
                         }
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 2)
             }
         }
         .padding(12)

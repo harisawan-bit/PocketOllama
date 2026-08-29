@@ -57,7 +57,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                     self.isRunning = true
                     self.boundPort = actualPort
                     BonjourAdvertiser.shared.startAdvertising(port: actualPort)
-                    RequestLogger.shared.log(method: "SYSTEM", path: "Server started on \(self.apiEndpointURL)", statusCode: 200)
+                    RequestLogger.shared.log(method: "SYSTEM", path: "Server listening on \(self.apiEndpointURL)", statusCode: 200)
                 }
             } else if case .failed = state {
                 self.stop()
@@ -106,14 +106,34 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         let method = parts[0]
         let path = parts[1]
 
-        if path.starts(with: "/v1/models") || path == "/api/tags" {
-            let modelName = await LlamaEngine.shared.activeModelName.isEmpty ? "hermes-3-llama-3.2-3b" : await LlamaEngine.shared.activeModelName
+        let activeModel = await LlamaEngine.shared.activeModelName.isEmpty ? "hermes-3-llama-3.2-3b" : await LlamaEngine.shared.activeModelName
+
+        if (path == "/" || path == "/index.html") && method == "GET" {
+            // Serve Embedded Web Dashboard
+            let html = WebDashboardHTML.render(serverIP: localIPAddress, port: formattedPort, modelName: activeModel)
+            sendResponse(connection: connection, status: "200 OK", contentType: "text/html; charset=utf-8", body: html)
+            RequestLogger.shared.log(method: "GET", path: "/", statusCode: 200)
+        } else if path == "/api/version" && method == "GET" {
+            // Ollama Version API
+            let json = "{\"version\": \"0.1.48-pocketollama\"}"
+            sendJSON(connection: connection, json: json)
+            RequestLogger.shared.log(method: "GET", path: "/api/version", statusCode: 200)
+        } else if path.starts(with: "/v1/models") || path == "/api/tags" {
+            // OpenAI & Ollama Models List
             let json = """
             {
               "object": "list",
+              "models": [
+                {
+                  "name": "\(activeModel)",
+                  "model": "\(activeModel)",
+                  "modified_at": "2026-08-29T10:00:00Z",
+                  "size": 2147483648
+                }
+              ],
               "data": [
                 {
-                  "id": "\(modelName)",
+                  "id": "\(activeModel)",
                   "object": "model",
                   "created": 1700000000,
                   "owned_by": "pocketollama"
@@ -123,8 +143,8 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             """
             sendJSON(connection: connection, json: json)
             RequestLogger.shared.log(method: method, path: path, statusCode: 200)
-        } else if path.starts(with: "/v1/chat/completions") && method == "POST" {
-            await handleChat(reqStr: reqStr, connection: connection)
+        } else if (path.starts(with: "/v1/chat/completions") || path == "/api/chat" || path == "/api/generate") && method == "POST" {
+            await handleChat(reqStr: reqStr, path: path, connection: connection)
         } else if path == "/health" || path == "/v1/health" {
             sendResponse(connection: connection, status: "200 OK", contentType: "application/json", body: "{\"status\": \"healthy\", \"runtime\": \"Metal\"}")
             RequestLogger.shared.log(method: method, path: path, statusCode: 200)
@@ -134,22 +154,22 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func handleChat(reqStr: String, connection: NWConnection) async {
+    private func handleChat(reqStr: String, path: String, connection: NWConnection) async {
         let parts = reqStr.components(separatedBy: "\r\n\r\n")
         guard parts.count > 1, let bodyData = parts[1].data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] else {
             sendResponse(connection: connection, status: "400 Bad Request", contentType: "application/json", body: "{\"error\": \"Invalid JSON\"}")
-            RequestLogger.shared.log(method: "POST", path: "/v1/chat/completions", statusCode: 400)
+            RequestLogger.shared.log(method: "POST", path: path, statusCode: 400)
             return
         }
 
-        let isStreaming = (json["stream"] as? Bool) ?? false
+        let isStreaming = (json["stream"] as? Bool) ?? true
         let model = (json["model"] as? String) ?? "hermes-3-3b"
         let messages = (json["messages"] as? [[String: Any]]) ?? []
         let tools = (json["tools"] as? [[String: Any]]) ?? []
 
         var systemPrompt = ""
-        var userPrompt = ""
+        var userPrompt = (json["prompt"] as? String) ?? ""
         for m in messages {
             let role = m["role"] as? String ?? ""
             let content = m["content"] as? String ?? ""
@@ -171,20 +191,31 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             do {
                 for try await delta in stream {
                     tokenCount += 1
-                    let chunkJSON = """
-                    data: {"id":"chatcmpl-\(UUID().uuidString.prefix(8))","object":"chat.completion.chunk","created":1700000000,"model":"\(model)","choices":[{"index":0,"delta":{"content":"\(delta.text)"\(delta.reasoningText != nil ? ",\"reasoning_content\":\"\(delta.reasoningText!)\"" : "")},"finish_reason":\(delta.isFinished ? "\"stop\"" : "null")}]}
+                    let chunkJSON: String
+                    if path.starts(with: "/api") {
+                        // Ollama Format
+                        chunkJSON = "{\"model\":\"\(model)\",\"message\":{\"role\":\"assistant\",\"content\":\"\(delta.text)\"},\"done\":\(delta.isFinished)}\n"
+                    } else {
+                        // OpenAI Format
+                        chunkJSON = """
+                        data: {"id":"chatcmpl-\(UUID().uuidString.prefix(8))","object":"chat.completion.chunk","created":1700000000,"model":"\(model)","choices":[{"index":0,"delta":{"content":"\(delta.text)"\(delta.reasoningText != nil ? ",\"reasoning_content\":\"\(delta.reasoningText!)\"" : "")},"finish_reason":\(delta.isFinished ? "\"stop\"" : "null")}]}
 
-                    """
+                        """
+                    }
                     connection.send(content: chunkJSON.data(using: .utf8), completion: .idempotent)
                 }
 
                 let duration = max(0.001, Date().timeIntervalSince(startTime))
                 TelemetryManager.shared.recordTokensGenerated(count: tokenCount, durationSeconds: duration)
-                RequestLogger.shared.log(method: "POST", path: "/v1/chat/completions", statusCode: 200, tokensGenerated: tokenCount, durationSeconds: duration)
+                RequestLogger.shared.log(method: "POST", path: path, statusCode: 200, tokensGenerated: tokenCount, durationSeconds: duration)
 
-                connection.send(content: "data: [DONE]\r\n\r\n".data(using: .utf8), completion: .contentProcessed({ _ in
+                if !path.starts(with: "/api") {
+                    connection.send(content: "data: [DONE]\r\n\r\n".data(using: .utf8), completion: .contentProcessed({ _ in
+                        connection.cancel()
+                    }))
+                } else {
                     connection.cancel()
-                }))
+                }
             } catch {
                 connection.cancel()
             }
@@ -200,7 +231,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                   "index": 0,
                   "message": {
                     "role": "assistant",
-                    "content": "Execution completed via PocketOllama Apple Silicon engine."
+                    "content": "Inference completed via PocketOllama Apple Silicon engine."
                   },
                   "finish_reason": "stop"
                 }
@@ -208,7 +239,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             }
             """
             sendJSON(connection: connection, json: resp)
-            RequestLogger.shared.log(method: "POST", path: "/v1/chat/completions", statusCode: 200, tokensGenerated: 1, durationSeconds: 0.1)
+            RequestLogger.shared.log(method: "POST", path: path, statusCode: 200, tokensGenerated: 1, durationSeconds: 0.1)
         }
     }
 
