@@ -246,3 +246,10 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         return address
     }
 }
+
+extension NWProtocolTCP.Options {
+    func then(_ closure: (NWProtocolTCP.Options) -> Void) -> NWProtocolTCP.Options {
+        closure(self)
+        return self
+    }
+}

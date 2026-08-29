@@ -64,7 +64,7 @@ public struct DashboardBentoView: View {
 
             Spacer()
 
-            Text("\(hardware.socName) • \(hardware.totalRAMBytes / (1024*1024*1024))GB RAM")
+            Text("\(hardware.socName) • \(String(format: "%.0f", hardware.totalRAMGB))GB RAM")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundColor(PocketTheme.textSecondary)
         }
