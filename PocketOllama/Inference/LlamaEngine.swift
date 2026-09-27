@@ -163,7 +163,7 @@ public actor LlamaEngine {
                 defer { isGenerating = false }
 
                 do {
-                    try generate(
+                    try await generate(
                         prompt: prompt,
                         config: config,
                         ctx: ctx,
@@ -190,7 +190,7 @@ public actor LlamaEngine {
         vocab: OpaquePointer,
         contextWindow: Int,
         into continuation: AsyncThrowingStream<TokenDelta, Error>.Continuation
-    ) throws {
+    ) async throws {
         let formatted = Self.formatPrompt(prompt, model: model)
         let byteCount = formatted.utf8.count
         guard byteCount > 0 else { throw LlamaEngineError.tokenizeFailed }
