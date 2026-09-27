@@ -96,7 +96,28 @@ API key in **Settings -> Engine Configuration -> Remote Access Authentication**.
 `/v1/*` and `/api/*` then require `Authorization: Bearer <key>`. The health
 endpoint and the web dashboard stay reachable so the key can be entered there.
 
+## Performance
+
+Verified against the shipped `llama.xcframework` (llama.cpp b11218):
+
+- **GPU**: every layer offloaded (`n_gpu_layers = -1`, llama.cpp's "all layers"),
+  plus `offload_kqv` so the KV cache stays resident on the Metal device instead of
+  being copied back per token, and `op_offload` for the remaining host tensor ops.
+  Metal residency, kernel fusion, graph optimisation and GPU concurrency are all
+  enabled by the library and left alone.
+- **CPU**: threads default to the real performance-core count, read from
+  `hw.perflevel0.logicalcpu`, and the thermal governor scales them back as the
+  phone heats. Adjustable 1-8 in Engine Configuration.
+- **Prefill**: `n_ubatch` floor of 512 keeps the GPU pipeline full instead of
+  submitting small work and idling between dispatches.
+
 ## Known limits
+
+- **The Neural Engine is not used.** The prebuilt XCFramework exports zero CoreML
+  symbols, so there is no ANE code path to enable. Using it would mean rebuilding
+  llama.cpp from source with the CoreML converter and linking that instead. The
+  GPU is the accelerator here; nothing in the app claims otherwise.
+
 
 - **The app must stay in the foreground.** iOS suspends a suspended app, and this
   app declares no background mode, so the HTTP server and inference both stop when
