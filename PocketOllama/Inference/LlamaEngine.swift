@@ -122,9 +122,6 @@ public actor LlamaEngine {
         mparams.n_gpu_layers = -1
         mparams.split_mode = LLAMA_SPLIT_MODE_NONE
         mparams.main_gpu = 0
-        // Validate tensor data: catches a truncated or corrupt download at load
-        // time instead of producing garbage tokens later.
-        mparams.check_tensors = true
 
         // Honour the mlock setting. llama.cpp gates this on device support, so a
         // device that cannot lock pages silently falls back to plain mmap.
@@ -167,11 +164,14 @@ public actor LlamaEngine {
         cparams.n_ctx = UInt32(ctxTokens)
 
         // Prefill batch was displayed in Engine Configuration but never applied.
-        // n_ubatch is the physical GPU batch: 512 keeps the Metal pipeline full
-        // instead of submitting small work and idling the GPU between dispatches.
-        let batch = max(32, ConfigEngine.shared.prefillBatchSize)
-        cparams.n_batch = UInt32(max(batch, 512))
-        cparams.n_ubatch = UInt32(max(512, min(batch * 2, 2048)))
+        // n_ubatch is the physical GPU batch: a floor of 512 keeps the Metal
+        // pipeline full instead of submitting small work and idling the GPU.
+        // llama.cpp requires n_ubatch <= n_batch, so the clamp is load-bearing:
+        // without it, picking 512 in the settings produced n_ubatch 1024 against
+        // n_batch 512 and the context failed to initialise.
+        let sizes = ContextSizing.batchSizes(prefillBatch: ConfigEngine.shared.prefillBatchSize)
+        cparams.n_batch = UInt32(sizes.batch)
+        cparams.n_ubatch = UInt32(sizes.ubatch)
 
         // Full GPU offload. These three were never set, so whether the KV-cache
         // ops and the host-side tensor ops ran on the GPU depended entirely on
@@ -185,8 +185,10 @@ public actor LlamaEngine {
         cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO
         // The thermal governor's cap now actually applies, so the thread count the
         // dashboard reports is the one the context runs with.
-        let threads = max(1, min(ConfigEngine.shared.threadCount,
-                                 ThermalGovernor.shared.activeThreadCount))
+        let threads = ContextSizing.effectiveThreads(
+            configured: ConfigEngine.shared.threadCount,
+            thermalCap: ThermalGovernor.shared.activeThreadCount
+        )
         cparams.n_threads = Int32(threads)
         cparams.n_threads_batch = Int32(threads)
 

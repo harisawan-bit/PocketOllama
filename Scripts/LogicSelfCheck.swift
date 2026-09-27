@@ -64,6 +64,29 @@ struct LogicSelfCheck {
 
         check("no-op at limit zero", PromptCompaction.compactTokenWindow(short, limit: 0) == short)
 
+
+        print("ContextSizing")
+        // Every value offered in the prefill batch picker must satisfy the
+        // n_ubatch <= n_batch invariant, or the context fails to initialise and
+        // no model will load at all.
+        for candidate in [128, 256, 512, 1024] {
+            let s = ContextSizing.batchSizes(prefillBatch: candidate)
+            check("prefill \(candidate): ubatch \(s.ubatch) <= batch \(s.batch)", s.ubatch <= s.batch && s.ubatch > 0)
+        }
+        do {
+            // Hostile inputs must not produce a zero or negative size.
+            for bad in [0, -5, 1, 99999] {
+                let s = ContextSizing.batchSizes(prefillBatch: bad)
+                check("prefill \(bad) stays valid", s.batch >= 512 && s.ubatch > 0 && s.ubatch <= s.batch)
+            }
+        }
+        check("threads respect the thermal cap",
+              ContextSizing.effectiveThreads(configured: 6, thermalCap: 2) == 2)
+        check("threads use the configured value when cool",
+              ContextSizing.effectiveThreads(configured: 6, thermalCap: 6) == 6)
+        check("threads never reach zero",
+              ContextSizing.effectiveThreads(configured: 0, thermalCap: 0) == 1)
+
         print(failures == 0 ? "\nAll checks passed" : "\n\(failures) check(s) failed")
         exit(failures == 0 ? 0 : 1)
     }
