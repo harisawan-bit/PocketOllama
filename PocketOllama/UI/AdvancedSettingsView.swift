@@ -4,6 +4,7 @@ public struct AdvancedSettingsView: View {
     @Environment(\.presentationMode) var presentationMode
     @ObservedObject var config = ConfigEngine.shared
     @ObservedObject var thermal = ThermalGovernor.shared
+    @State private var apiKeyDraft: String = LLMServer.apiKey ?? ""
 
     let hardware = HardwareAutoTuner.shared.detectProfile()
 
@@ -28,6 +29,9 @@ public struct AdvancedSettingsView: View {
 
                         // Section 5: Network & Port Gateway
                         networkSection
+
+                        // Section 6: Remote Access Authentication
+                        apiKeySection
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 14)
@@ -205,6 +209,57 @@ public struct AdvancedSettingsView: View {
                 }
             }
             .toggleStyle(SwitchToggleStyle(tint: PocketTheme.terminalGreen))
+        }
+        .padding(12)
+        .devCard(cornerRadius: 8)
+    }
+
+    // MARK: - API Key Section
+    private var apiKeySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("REMOTE ACCESS AUTHENTICATION")
+                .font(.system(size: 9, weight: .black, design: .monospaced))
+                .foregroundColor(PocketTheme.textMuted)
+
+            Text("The server listens on every Wi-Fi interface. Without a key, any device on the same network can run inference on this phone.")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(PocketTheme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            SecureField("Leave empty to disable", text: $apiKeyDraft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .padding(8)
+                .background(PocketTheme.bgSurfaceHover)
+                .cornerRadius(6)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(PocketTheme.borderSubtle, lineWidth: 1))
+
+            HStack(spacing: 8) {
+                Button {
+                    let trimmed = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    LLMServer.apiKey = trimmed.isEmpty ? nil : trimmed
+                    UserDefaults.standard.set(trimmed.isEmpty ? nil : trimmed, forKey: "poApiKey")
+                    apiKeyDraft = trimmed
+                } label: {
+                    Text("Save Key").font(.system(size: 11, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(PocketTheme.devCyan)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+
+                Button {
+                    apiKeyDraft = ""
+                    LLMServer.apiKey = nil
+                    UserDefaults.standard.removeObject(forKey: "poApiKey")
+                } label: {
+                    Text("Disable").font(.system(size: 11, weight: .bold, design: .monospaced))
+                }
+                .foregroundColor(PocketTheme.roseAlert)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+            }
+
+            Text(LLMServer.apiKey?.isEmpty == false ? "Active. Clients must send Authorization: Bearer <key>." : "Disabled. Open to anyone on this network.")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(LLMServer.apiKey?.isEmpty == false ? PocketTheme.terminalGreen : PocketTheme.amberWarning)
         }
         .padding(12)
         .devCard(cornerRadius: 8)

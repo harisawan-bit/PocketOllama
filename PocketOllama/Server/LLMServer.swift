@@ -21,6 +21,15 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         signal(SIGPIPE, SIG_IGN)
     }
 
+    /// When set, inference endpoints require `Authorization: Bearer <key>`.
+    public static var apiKey: String? = UserDefaults.standard.string(forKey: "poApiKey")
+
+    /// Paths that can drive the model or read model contents.
+    private static func requiresAuth(_ path: String) -> Bool {
+        path.hasPrefix("/v1/") || path.hasPrefix("/api/")
+            || path == "/api/generate" || path == "/api/chat"
+    }
+
     public func start(preferredPort: UInt16 = 11434) {
         guard !isRunning else { return }
         localIPAddress = getWiFiAddress() ?? "127.0.0.1"
@@ -120,6 +129,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         let method: String
         let path: String
         let body: Data
+        let authorization: String?
     }
 
     /// Returns nil until the headers and the full Content-Length body have arrived.
@@ -157,7 +167,17 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             body = data[bodyStart..<(bodyStart + contentLength)]
         }
 
-        return HTTPRequest(method: parts[0].uppercased(), path: parts[1], body: Data(body))
+        var authorization: String?
+        for line in parts.dropFirst() {
+            let lower = line.lowercased()
+            if lower.hasPrefix("authorization:") {
+                authorization = String(line.dropFirst("authorization:".count))
+                    .trimmingCharacters(in: .whitespaces)
+            }
+        }
+
+        return HTTPRequest(method: parts[0].uppercased(), path: parts[1],
+                           body: Data(body), authorization: authorization)
     }
 
     private static func decodeChunked(_ raw: Data) -> Data {
@@ -185,6 +205,23 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             sendRaw(connection: connection, status: "204 No Content", contentType: "text/plain", body: "", extraHeaders: corsHeaders)
             RequestLogger.shared.log(method: method, path: path, statusCode: 204)
             return
+        }
+
+        // The listener accepts every interface, so inference endpoints require the
+        // API key when one is set. Otherwise anyone on the same Wi-Fi could drive
+        // the GPU and read the model. Health checks and the dashboard stay open.
+        if let key = apiKey, !key.isEmpty, Self.requiresAuth(path) {
+            let presented = request.authorization?
+                .replacingOccurrences(of: "Bearer ", with: "")
+                .trimmingCharacters(in: .whitespaces)
+            guard presented == key else {
+                sendRaw(connection: connection, status: "401 Unauthorized",
+                        contentType: "application/json",
+                        body: "{\"error\":\"invalid or missing Authorization: Bearer <key>\"}",
+                        extraHeaders: corsHeaders)
+                RequestLogger.shared.log(method: method, path: path, statusCode: 401)
+                return
+            }
         }
 
         let activeModel = await LlamaEngine.shared.isModelReady
