@@ -298,7 +298,7 @@ public struct ChatPlaygroundView: View {
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 await MainActor.run {
                     self.isGenerating = false
-                    self.messages[assistantIndex].isStreaming = false
+
                     self.messages[assistantIndex].content = "Error: \(message)"
                 }
             }
