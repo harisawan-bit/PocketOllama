@@ -1,6 +1,6 @@
 import Foundation
 
-public struct GGUFMetadata: Sendable {
+public struct GGUFMetadata: Sendable, GGUFBudgetFields {
     public let architecture: String
     public let contextLengthTrained: Int
     public let layerCount: Int
@@ -155,22 +155,7 @@ public final class GGUFHeaderParser: @unchecked Sendable {
         contextTokens: Int,
         kvQuant: String = "q4_0"
     ) -> UInt64 {
-        let bytesPerElement: Double
-        switch kvQuant.lowercased() {
-        case "q4_0", "q4_1":
-            bytesPerElement = 0.5625 // 4.5 bits per weight with scales
-        case "q8_0":
-            bytesPerElement = 1.0625 // 8.5 bits
-        default: // fp16
-            bytesPerElement = 2.0
-        }
-
-        // KV cache formula: 2 * n_layers * n_kv_heads * (n_embd / n_heads) * bytesPerElement * n_ctx
-        let kvHeads = max(1, metadata.headCountKV)
-        let headDim = Double(metadata.embeddingLength) / Double(max(1, metadata.headCount))
-        let bytesPerToken = 2.0 * Double(metadata.layerCount) * Double(kvHeads) * headDim * bytesPerElement
-
-        return UInt64(Double(contextTokens) * bytesPerToken)
+        ModelBudget.kvCacheBytes(metadata: metadata, contextTokens: contextTokens, kvQuant: kvQuant)
     }
 
     /// Calculates maximum safe context tokens before hitting iOS process memory limits
@@ -179,23 +164,30 @@ public final class GGUFHeaderParser: @unchecked Sendable {
         usableProcessRAMBytes: UInt64,
         kvQuant: String = "q4_0"
     ) -> Int {
-        let safetyBuffer: UInt64 = 350 * 1024 * 1024 // 350MB buffer for iOS kernel
-        guard usableProcessRAMBytes > (metadata.fileSizeBytes + safetyBuffer) else {
-            return 2048
-        }
-
-        let availableForKV = usableProcessRAMBytes - metadata.fileSizeBytes - safetyBuffer
-
-        let bytesPerElement: Double = (kvQuant.lowercased() == "q4_0") ? 0.5625 : ((kvQuant.lowercased() == "q8_0") ? 1.0625 : 2.0)
-        let kvHeads = max(1, metadata.headCountKV)
-        let headDim = Double(metadata.embeddingLength) / Double(max(1, metadata.headCount))
-        let bytesPerToken = 2.0 * Double(metadata.layerCount) * Double(kvHeads) * headDim * bytesPerElement
-
-        let maxTokens = Int(Double(availableForKV) / bytesPerToken)
-
-        // Clamp between 2,048 and 262,144 (256k tokens)
-        return min(262144, max(2048, (maxTokens / 1024) * 1024))
+        ModelBudget.safeContextTokens(
+            metadata: metadata,
+            usableProcessRAMBytes: usableProcessRAMBytes,
+            safetyBufferBytes: Self.safetyBufferBytes,
+            kvQuant: kvQuant
+        )
     }
+
+    /// Suggests the best KV quantisation for this model at this context size.
+    public func recommendKVQuant(
+        metadata: GGUFMetadata,
+        desiredContext: Int,
+        usableProcessRAMBytes: UInt64
+    ) -> String {
+        ModelBudget.recommendKVQuant(
+            metadata: metadata,
+            desiredContext: desiredContext,
+            usableProcessRAMBytes: usableProcessRAMBytes,
+            safetyBufferBytes: Self.safetyBufferBytes
+        )
+    }
+
+    /// Headroom held back for the iOS kernel, GPU working set and fragmentation.
+    static let safetyBufferBytes: UInt64 = 350 * 1024 * 1024
 
     private func fallbackMetadata(fileSize: UInt64) -> GGUFMetadata {
         return GGUFMetadata(

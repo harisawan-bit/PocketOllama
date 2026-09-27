@@ -276,6 +276,7 @@ public struct DashboardBentoView: View {
                         let target = Int(newValue)
                         guard target != config.contextWindowTokens else { return }
                         config.contextWindowTokens = target
+                        config.userHasChosenContext = true
                         // The context window is fixed when llama_init_from_model runs, so
                         // changing it requires a reload to take effect.
                         if LlamaEngine.shared.isModelReady {

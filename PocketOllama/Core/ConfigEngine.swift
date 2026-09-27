@@ -54,6 +54,9 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
 
     private var cancellables = Set<AnyCancellable>()
     private var lastKnownMetadata: GGUFMetadata?
+    /// True once the user moves the context control, so a model download stops
+    /// overriding it.
+    public var userHasChosenContext = false
 
     private init() {
         let hw = HardwareAutoTuner.shared.detectProfile()
@@ -94,7 +97,21 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
             }
 
             self.lastKnownMetadata = metadata
-            self.contextWindowTokens = self.recommendedContextTokens
+            // Choose the KV quantisation for THIS model at THIS context: quality
+            // where there is room, memory where there is not. Previously it stayed
+            // whatever the device table suggested regardless of the model.
+            let quant = GGUFHeaderParser.shared.recommendKVQuant(
+                metadata: metadata,
+                desiredContext: self.recommendedContextTokens,
+                usableProcessRAMBytes: hw.maxSafeRAMLimitBytes
+            )
+            self.kvQuantization = quant
+            self.recommendedKVQuant = quant
+            // Do not move a context the user already set. A download completing
+            // silently overwrote their choice.
+            if !self.userHasChosenContext {
+                self.contextWindowTokens = self.recommendedContextTokens
+            }
             self.recalculateKVMemory(context: self.contextWindowTokens, kvQuant: self.kvQuantization, meta: metadata)
         }
     }

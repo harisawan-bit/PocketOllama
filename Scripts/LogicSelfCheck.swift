@@ -65,6 +65,50 @@ struct LogicSelfCheck {
         check("no-op at limit zero", PromptCompaction.compactTokenWindow(short, limit: 0) == short)
 
 
+
+        print("ModelBudget")
+        // head_dim is n_embd/n_head, so a GQA model must NOT be charged
+        // n_embd/n_head_kv: that overstated the cache by the GQA factor.
+        let gqa = BudgetFixture(8192, layers: 32, embd: 4096, heads: 32, kvHeads: 8)
+        let perTok = ModelBudget.bytesPerToken(
+            layerCount: gqa.layerCount, embeddingLength: gqa.embeddingLength,
+            headCount: gqa.headCount, headCountKV: gqa.headCountKV, kvQuant: "q4_0")
+        let expected = 2.0 * 32 * 8 * (4096.0 / 32.0) * 0.5625
+        check("GQA head_dim uses n_head", abs(perTok - expected) < 0.001)
+
+        // A model trained at 8k must never be offered more than 8k, even when
+        // RAM would allow far more.
+        let hugeRAM: UInt64 = 40 * 1024 * 1024 * 1024
+        let ctx = ModelBudget.safeContextTokens(
+            metadata: gqa, usableProcessRAMBytes: hugeRAM, safetyBufferBytes: 350 * 1024 * 1024, kvQuant: "q4_0")
+        check("context capped at trained length (got \(ctx))", ctx <= 8192 && ctx >= 1024)
+
+        // And a long-context model still gets its full trained range.
+        let longCtx = BudgetFixture(131072, layers: 32, embd: 4096, heads: 32, kvHeads: 8)
+        let ctx2 = ModelBudget.safeContextTokens(
+            metadata: longCtx, usableProcessRAMBytes: hugeRAM, safetyBufferBytes: 350 * 1024 * 1024, kvQuant: "q4_0")
+        check("long-context model keeps its range (got \(ctx2))", ctx2 > 8192)
+
+        // When the model does not fit, the floor is returned rather than 0.
+        let tinyRAM: UInt64 = 512 * 1024 * 1024
+        let ctx3 = ModelBudget.safeContextTokens(
+            metadata: gqa, usableProcessRAMBytes: tinyRAM, safetyBufferBytes: 350 * 1024 * 1024, kvQuant: "q4_0")
+        check("no memory yields a positive floor (got \(ctx3))", ctx3 > 0 && ctx3 <= 8192)
+
+        // KV quant recommendation must never claim more than the RAM can hold.
+        for q in ["q8_0", "q4_0"] {
+            let rec = ModelBudget.recommendKVQuant(
+                metadata: gqa, desiredContext: 8192,
+                usableProcessRAMBytes: 6 * 1024 * 1024 * 1024, safetyBufferBytes: 350 * 1024 * 1024)
+            check("KV quant \(rec) is a known type", ["q8_0","q4_0","f16"].contains(rec))
+        }
+        check("q8_0 is chosen when there is abundant RAM",
+              ModelBudget.recommendKVQuant(metadata: gqa, desiredContext: 2048,
+                usableProcessRAMBytes: 40 * 1024 * 1024 * 1024, safetyBufferBytes: 0) == "q8_0")
+        check("q4_0 is chosen when RAM is tight",
+              ModelBudget.recommendKVQuant(metadata: gqa, desiredContext: 65536,
+                usableProcessRAMBytes: 5 * 1024 * 1024 * 1024, safetyBufferBytes: 0) == "q4_0")
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and

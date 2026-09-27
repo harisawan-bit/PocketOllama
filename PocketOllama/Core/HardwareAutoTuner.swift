@@ -1,13 +1,14 @@
 import Foundation
 import UIKit
+import Metal
 
 public struct DeviceHardwareSpec: Sendable, Codable {
     public let modelIdentifier: String
     public let marketingName: String
     public let socName: String
-    public let gpuCores: Int
-    public let aneCores: Int
-    public let aneTOPS: Double
+    /// Real GPU name from Metal. There is no API for a core count on iOS,
+    /// so this is a name, not an invented number.
+    public let gpuName: String
     public let totalRAMGB: Double
     public let maxSafeRAMLimitBytes: UInt64
     public let recommendedModelTier: String
@@ -46,6 +47,27 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                           total: max(1, total))
     }
 
+    /// The real GPU, straight from Metal. There is no iOS API for a GPU core
+    /// count, so the app reports the device name rather than inventing a number.
+    public static func metalGPUName() -> String {
+        metalDeviceName ?? "Apple GPU"
+    }
+
+    private static let metalDeviceName: String? = {
+        guard let device = MTLCreateSystemDefaultDevice() else { return nil }
+        return device.name
+    }()
+
+    /// Safe process budget derived from measured RAM.
+    ///
+    /// iOS jetsams a process well before physical RAM runs out, and the ceiling
+    /// moves with both device RAM and what else is resident. 45% of physical is a
+    /// conservative planning figure; the authoritative check is the post-load
+    /// measurement against os_proc_available_memory, not this number.
+    public static func safeRAMLimit(totalRAMGB: Double) -> UInt64 {
+        UInt64(max(1.5, min(totalRAMGB * 0.45, 12.0)) * 1024 * 1024 * 1024)
+    }
+
     private static func sysctlInt(_ name: String) -> Int? {
         var value: Int = 0
         var size = MemoryLayout<Int>.size
@@ -62,9 +84,7 @@ public final class HardwareAutoTuner: @unchecked Sendable {
             modelIdentifier: base.modelIdentifier,
             marketingName: base.marketingName,
             socName: base.socName,
-            gpuCores: base.gpuCores,
-            aneCores: base.aneCores,
-            aneTOPS: base.aneTOPS,
+            gpuName: base.gpuName,
             totalRAMGB: base.totalRAMGB,
             maxSafeRAMLimitBytes: base.maxSafeRAMLimitBytes,
             recommendedModelTier: base.recommendedModelTier,
@@ -94,11 +114,9 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 modelIdentifier: identifier,
                 marketingName: "iPhone 15 Pro / Pro Max",
                 socName: "A17 Pro (3nm)",
-                gpuCores: 6,
-                aneCores: 16,
-                aneTOPS: 35.0,
+                gpuName: Self.metalGPUName(),
                 totalRAMGB: totalRAMGB,
-                maxSafeRAMLimitBytes: UInt64(6.4 * 1024 * 1024 * 1024),
+                maxSafeRAMLimitBytes: Self.safeRAMLimit(totalRAMGB: totalRAMGB),
                 recommendedModelTier: "Hermes 3 8B (Q4_K_M) / DeepSeek-R1-7B / Qwen 2.5 7B",
                 maxSafeContextTokens: 32768,
                 defaultKVQuant: "q4_0",
@@ -111,11 +129,9 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 modelIdentifier: identifier,
                 marketingName: "iPhone 16 Pro / Pro Max",
                 socName: "A18 Pro (3nm)",
-                gpuCores: 6,
-                aneCores: 16,
-                aneTOPS: 35.0,
+                gpuName: Self.metalGPUName(),
                 totalRAMGB: totalRAMGB,
-                maxSafeRAMLimitBytes: UInt64(6.5 * 1024 * 1024 * 1024),
+                maxSafeRAMLimitBytes: Self.safeRAMLimit(totalRAMGB: totalRAMGB),
                 recommendedModelTier: "Hermes 3 8B (Q4_K_M) / DeepSeek-R1-7B",
                 maxSafeContextTokens: 32768,
                 defaultKVQuant: "q4_0",
@@ -128,11 +144,9 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 modelIdentifier: identifier,
                 marketingName: "iPhone 16 / 16 Plus",
                 socName: "A18",
-                gpuCores: 5,
-                aneCores: 16,
-                aneTOPS: 35.0,
+                gpuName: Self.metalGPUName(),
                 totalRAMGB: totalRAMGB,
-                maxSafeRAMLimitBytes: UInt64(6.2 * 1024 * 1024 * 1024),
+                maxSafeRAMLimitBytes: Self.safeRAMLimit(totalRAMGB: totalRAMGB),
                 recommendedModelTier: "Hermes 3 8B (Q4_K_M) / Llama 3.2 3B",
                 maxSafeContextTokens: 16384,
                 defaultKVQuant: "q4_0",
@@ -145,11 +159,9 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 modelIdentifier: identifier,
                 marketingName: "iPhone 15 / 15 Plus",
                 socName: "A16 Bionic",
-                gpuCores: 5,
-                aneCores: 16,
-                aneTOPS: 17.0,
+                gpuName: Self.metalGPUName(),
                 totalRAMGB: totalRAMGB,
-                maxSafeRAMLimitBytes: UInt64(4.2 * 1024 * 1024 * 1024),
+                maxSafeRAMLimitBytes: Self.safeRAMLimit(totalRAMGB: totalRAMGB),
                 recommendedModelTier: "Hermes 3 3B / Llama 3.2 3B",
                 maxSafeContextTokens: 8192,
                 defaultKVQuant: "q8_0",
@@ -162,11 +174,9 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 modelIdentifier: identifier,
                 marketingName: "iPhone 14 Pro / Pro Max",
                 socName: "A16 Bionic",
-                gpuCores: 5,
-                aneCores: 16,
-                aneTOPS: 17.0,
+                gpuName: Self.metalGPUName(),
                 totalRAMGB: totalRAMGB,
-                maxSafeRAMLimitBytes: UInt64(4.2 * 1024 * 1024 * 1024),
+                maxSafeRAMLimitBytes: Self.safeRAMLimit(totalRAMGB: totalRAMGB),
                 recommendedModelTier: "Hermes 3 3B / Qwen 2.5 3B",
                 maxSafeContextTokens: 8192,
                 defaultKVQuant: "q8_0",
@@ -175,39 +185,23 @@ public final class HardwareAutoTuner: @unchecked Sendable {
             )
             
         default:
-            if totalRAMGB >= 7.2 {
-                return DeviceHardwareSpec(
-                    modelIdentifier: identifier,
-                    marketingName: "iPhone 15 Pro / Apple Silicon (8GB)",
-                    socName: "A17 Pro / M-Series",
-                    gpuCores: 6,
-                    aneCores: 16,
-                    aneTOPS: 35.0,
-                    totalRAMGB: totalRAMGB,
-                    maxSafeRAMLimitBytes: UInt64(6.4 * 1024 * 1024 * 1024),
-                    recommendedModelTier: "Hermes 3 8B / DeepSeek-R1",
-                        maxSafeContextTokens: 32768,
-                    defaultKVQuant: "q4_0",
-                    supportsSpeculative: true,
-                    is8GBPlus: true
-                )
-            } else {
-                return DeviceHardwareSpec(
-                    modelIdentifier: identifier,
-                    marketingName: "Apple Silicon (6GB)",
-                    socName: "Apple Silicon",
-                    gpuCores: 5,
-                    aneCores: 16,
-                    aneTOPS: 17.0,
-                    totalRAMGB: totalRAMGB,
-                    maxSafeRAMLimitBytes: UInt64(4.0 * 1024 * 1024 * 1024),
-                    recommendedModelTier: "Hermes 3 3B / Llama 3.2 3B",
-                        maxSafeContextTokens: 8192,
-                    defaultKVQuant: "q8_0",
-                    supportsSpeculative: false,
-                    is8GBPlus: false
-                )
-            }
+            // Unknown device. Do not name a chip: an iPad Pro M4 or an iPhone 17
+            // used to land here and be reported as "A17 Pro" with a guessed core
+            // count. Derive the limits from measured RAM and leave the SoC unnamed.
+            let big = totalRAMGB >= 7.2
+            return DeviceHardwareSpec(
+                modelIdentifier: identifier,
+                marketingName: "Apple Silicon (\(String(format: "%.1f", totalRAMGB)) GB)",
+                socName: "Apple Silicon",
+                    gpuName: Self.metalGPUName(),
+                totalRAMGB: totalRAMGB,
+                maxSafeRAMLimitBytes: Self.safeRAMLimit(totalRAMGB: totalRAMGB),
+                recommendedModelTier: big ? "Hermes 3 8B / DeepSeek-R1" : "Llama 3.2 3B / Qwen 2.5 3B",
+                maxSafeContextTokens: big ? 32768 : 8192,
+                defaultKVQuant: big ? "q4_0" : "q8_0",
+                supportsSpeculative: false,
+                is8GBPlus: big
+            )
         }
     }
 }

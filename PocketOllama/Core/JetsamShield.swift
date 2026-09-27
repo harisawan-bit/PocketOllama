@@ -54,32 +54,22 @@ public final class JetsamShield: @unchecked Sendable {
         )
     }
 
-    /// bytesPerToken = 2 (K and V) * n_layers * n_kv_heads * head_dim * bytesPerElement
-    /// Derived from the device tier since model metadata is not yet available.
+    /// Planning estimate used before the model is loaded and its real dimensions
+    /// are known. Delegates to the shared arithmetic so it cannot drift from the
+    /// post-load check.
     private static func estimatedBytesPerToken(profile: DeviceHardwareSpec, kvQuant: String) -> Double {
-        let bytesPerElement: Double
-        switch kvQuant.lowercased() {
-        case "q4_0", "q4_1": bytesPerElement = 0.5625
-        case "q8_0": bytesPerElement = 1.0625
-        default: bytesPerElement = 2.0
-        }
-
-        // Representative mid-size model shape for this device class.
-        let layers: Double
-        let nEmbd: Double
-        let nHeads: Double
-        let nKVHeads: Double
-
+        let (layers, embd, heads, kvHeads): (Int, Int, Int, Int)
         if profile.is8GBPlus {
-            (layers, nEmbd, nHeads, nKVHeads) = (32, 4096, 32, 8)
+            (layers, embd, heads, kvHeads) = (32, 4096, 32, 8)
         } else if profile.totalRAMGB >= 5.0 {
-            (layers, nEmbd, nHeads, nKVHeads) = (28, 3072, 24, 8)
+            (layers, embd, heads, kvHeads) = (28, 3072, 24, 8)
         } else {
-            (layers, nEmbd, nHeads, nKVHeads) = (24, 1536, 12, 2)
+            (layers, embd, heads, kvHeads) = (24, 1536, 12, 2)
         }
-
-        let headDim = nEmbd / max(1, nHeads)
-        return 2.0 * layers * nKVHeads * headDim * bytesPerElement
+        return ModelBudget.bytesPerToken(
+            layerCount: layers, embeddingLength: embd,
+            headCount: heads, headCountKV: kvHeads, kvQuant: kvQuant
+        )
     }
 
     public func compactPromptMiddleOut(prompt: String, maxAllowedTokens: Int) -> (compactedPrompt: String, wasCompacted: Bool) {
