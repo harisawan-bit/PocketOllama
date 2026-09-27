@@ -16,6 +16,7 @@ public struct ChatPlaygroundView: View {
     @State private var generationStartTime: Date?
     @State private var generatedTokens: Int = 0
     @State private var loadedModelName: String = ""
+    @State private var generationTask: Task<Void, Never>?
     @State private var isModelReady: Bool = false
 
     private var canSend: Bool {
@@ -61,6 +62,11 @@ public struct ChatPlaygroundView: View {
             }
         }
         .task { await refreshModelState() }
+        .onDisappear {
+            // Leaving the tab should not leave the GPU decoding into nothing.
+            generationTask?.cancel()
+            generationTask = nil
+        }
     }
 
     /// Reads the engine state so the header and send button reflect reality.
@@ -234,6 +240,21 @@ public struct ChatPlaygroundView: View {
                         .stroke(PocketTheme.borderSubtle, lineWidth: 1)
                 )
 
+            if isGenerating {
+                Button(action: cancelGeneration) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "stop.fill")
+                        Text("Stop")
+                    }
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 9)
+                    .background(PocketTheme.roseAlert.opacity(0.18))
+                    .foregroundColor(PocketTheme.roseAlert)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                }
+            }
+
             Button(action: sendMessage) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: 28))
@@ -252,6 +273,21 @@ public struct ChatPlaygroundView: View {
         )
     }
 
+    /// Cancels the in-flight generation. The engine's continuation cancellation
+    /// handler stops the llama decode loop on the next token, so this actually
+    /// releases the GPU rather than merely hiding the output.
+    private func cancelGeneration() {
+        // Ask the engine directly rather than depending on stream teardown
+        // semantics, then stop the consumer task.
+        Task { await LlamaEngine.shared.cancelGeneration() }
+        generationTask?.cancel()
+        generationTask = nil
+        isGenerating = false
+        if let last = messages.indices.last, messages[last].role == "assistant", messages[last].content.isEmpty {
+            messages[last].content = "(stopped)"
+        }
+    }
+
     private func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !isGenerating else { return }
@@ -266,7 +302,7 @@ public struct ChatPlaygroundView: View {
         messages.append(assistantMsg)
         let assistantIndex = messages.count - 1
 
-        Task {
+        generationTask = Task {
             // LlamaEngine.formatPrompt parses role-prefixed blocks and applies the
             // model own chat template. Do not hand-build ChatML here.
             let prompt = "user\n\(text)"
@@ -289,6 +325,7 @@ public struct ChatPlaygroundView: View {
 
                 await MainActor.run {
                     self.isGenerating = false
+                    self.generationTask = nil
                     if let start = self.generationStartTime {
                         let duration = max(0.01, Date().timeIntervalSince(start))
                         self.messages[assistantIndex].tokensPerSecond = Double(self.generatedTokens) / duration

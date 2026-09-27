@@ -7,7 +7,17 @@ public struct QRConnectSheet: View {
     let hostname: String
 
     private let context = CIContext()
-    private let filter = CIFilter.qrCodeGenerator()
+
+    /// Cached per endpoint. Building the filter during body evaluation re-ran the
+    /// generator on every re-render.
+    private static var qrCache: (key: String, image: UIImage?) = ("", nil)
+
+    private func qrImage() -> UIImage? {
+        if Self.qrCache.key == endpointURL { return Self.qrCache.image }
+        let image = generateQRCode(from: endpointURL)
+        Self.qrCache = (endpointURL, image)
+        return image
+    }
 
     public var body: some View {
         NavigationView {
@@ -26,7 +36,7 @@ public struct QRConnectSheet: View {
                     .padding(.top, 10)
 
                     // Generated QR Code
-                    if let image = generateQRCode(from: endpointURL) {
+                    if let image = qrImage() {
                         Image(uiImage: image)
                             .interpolation(.none)
                             .resizable()
@@ -45,6 +55,17 @@ public struct QRConnectSheet: View {
                         Text(endpointURL)
                             .font(.system(size: 13, weight: .bold, design: .monospaced))
                             .foregroundColor(PocketTheme.devCyan)
+
+                        VStack(spacing: 3) {
+                            Text("Or type the hostname")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(PocketTheme.textMuted)
+                            Text("http://\(hostname).local")
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundColor(PocketTheme.terminalGreen)
+                                .textSelection(.enabled)
+                        }
+                        .padding(.top, 2)
 
                         Text("Same Wi-Fi network required")
                             .font(.system(size: 11, design: .monospaced))
@@ -70,7 +91,9 @@ public struct QRConnectSheet: View {
     }
 
     private func generateQRCode(from string: String) -> UIImage? {
+        let filter = CIFilter.qrCodeGenerator()
         filter.message = Data(string.utf8)
+        filter.correctionLevel = "M"
 
         if let outputImage = filter.outputImage {
             let transform = CGAffineTransform(scaleX: 10, y: 10)

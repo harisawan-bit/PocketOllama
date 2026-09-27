@@ -8,6 +8,7 @@ public struct InsomniaOvernightView: View {
     @State private var xOffset: CGFloat = 0
     @State private var yOffset: CGFloat = 0
     @State private var currentTime = Date()
+    @State private var previousIdleTimer = false
 
     let timer = Timer.publish(every: 1.0, on: .main, in: .common).autoconnect()
     let driftTimer = Timer.publish(every: 30.0, on: .main, in: .common).autoconnect()
@@ -29,12 +30,12 @@ public struct InsomniaOvernightView: View {
                         .fill(server.isRunning ? PocketTheme.terminalGreen.opacity(0.4) : PocketTheme.roseAlert.opacity(0.4))
                         .frame(width: 5, height: 5)
 
-                    Text("OVERNIGHT ACTIVE // \(String(format: "%.1f", telemetry.tokensPerSecond)) t/s")
+                    Text(server.isRunning ? "SERVER ACTIVE // \(String(format: "%.1f", telemetry.tokensPerSecond)) t/s" : "SERVER STOPPED // TAP TO EXIT")
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundColor(Color.white.opacity(0.12))
                 }
 
-                Text("Double tap screen to unlock")
+                Text(server.isRunning ? "Double tap to exit. iOS pauses inference if the app is backgrounded." : "Double tap to exit")
                     .font(.system(size: 8, design: .monospaced))
                     .foregroundColor(Color.white.opacity(0.06))
                     .padding(.top, 2)
@@ -55,7 +56,14 @@ public struct InsomniaOvernightView: View {
             }
         }
         .onAppear {
+            previousIdleTimer = UIApplication.shared.isIdleTimerDisabled
             UIApplication.shared.isIdleTimerDisabled = true
+        }
+        .onDisappear {
+            // Restore rather than force false: the Dashboard may be holding the
+            // screen awake for a running server. Without this the screen never
+            // auto-locked again after leaving nightstand mode.
+            UIApplication.shared.isIdleTimerDisabled = previousIdleTimer
         }
     }
 }

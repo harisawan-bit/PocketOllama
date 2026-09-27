@@ -28,14 +28,13 @@ targets:
       path: PocketOllama/Resources/Info.plist
       properties:
         CFBundleDisplayName: "PocketOllama"
-        CFBundleShortVersionString: "2.6.0"
-        CFBundleVersion: "9"
+        CFBundleShortVersionString: "2.7.0"
+        CFBundleVersion: "10"
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         NSLocalNetworkUsageDescription: "PocketOllama serves an OpenAI-compatible API on your local Wi-Fi network."
         NSBonjourServices: ["_ollama._tcp", "_openai._tcp"]
-        UIBackgroundModes: ["audio"]
     entitlements:
       path: PocketOllama/Resources/PocketOllama.entitlements
     settings:

@@ -75,7 +75,13 @@ public actor LlamaEngine {
     /// Prompt and completion token counts from the most recent generation.
     public var lastUsage: (prompt: Int, completion: Int) { (lastPromptTokens, lastCompletionTokens) }
     private var lastCompletionTokens = 0
+    private var cancelRequested = false
     public var isBusy: Bool { isGenerating }
+
+    /// Stops the current generation at the next token boundary.
+    public func cancelGeneration() {
+        cancelRequested = true
+    }
     public var contextSize: Int { activeContextSize }
 
     public var activeModelName: String {
@@ -177,6 +183,10 @@ public actor LlamaEngine {
         activeContextSize = ctxTokens
 
         ConfigEngine.shared.updateForLoadedModel(model: m, modelFileSize: fileSize, loadedContext: ctxTokens)
+
+        // Remember this choice so the next launch restores the model the user
+        // actually had loaded rather than an arbitrary one from the folder.
+        UserDefaults.standard.set((path as NSString).lastPathComponent, forKey: "poLastLoadedModel")
     }
 
     public func unloadModel() async {
@@ -213,6 +223,7 @@ public actor LlamaEngine {
                     return
                 }
                 isGenerating = true
+                cancelRequested = false
                 lastPromptTokens = 0
                 lastCompletionTokens = 0
                 defer { isGenerating = false }
@@ -233,7 +244,14 @@ public actor LlamaEngine {
                 }
                 continuation.finish()
             }
-            continuation.onTermination = { _ in task.cancel() }
+            // A dropped client cancels the decode loop deterministically now,
+            // rather than relying on the producer task noticing the consumer is gone.
+            // onTermination is a non-isolated @Sendable closure, so the actor state
+            // has to be hopped onto.
+            continuation.onTermination = { _ in
+                task.cancel()
+                Task { [weak self] in self?.cancelRequested = true }
+            }
         }
     }
 
@@ -284,7 +302,7 @@ public actor LlamaEngine {
 
         var i = 0
         while i < Int(n) {
-            if Task.isCancelled { return }
+            if Task.isCancelled || cancelRequested { return }
             let chunk = min(256, Int(n) - i)
             let batch = llama_batch_get_one(&tokens[i], Int32(chunk))
             if llama_decode(ctx, batch) != 0 { throw LlamaEngineError.decodeFailed }
@@ -307,7 +325,7 @@ public actor LlamaEngine {
         var utf8Buffer = PartialUTF8Decoder()
 
         while produced < config.maxTokens {
-            if Task.isCancelled {
+            if Task.isCancelled || cancelRequested {
                 lastCompletionTokens = produced
                 return
             }
