@@ -98,6 +98,14 @@ endpoint and the web dashboard stay reachable so the key can be entered there.
 
 ## Known limits
 
+- **The app must stay in the foreground.** iOS suspends a suspended app, and this
+  app declares no background mode, so the HTTP server and inference both stop when
+  you switch apps or lock the screen. There is deliberately no fake audio session
+  pretending otherwise. Keep the app open while serving.
+- Nightstand mode dims the display and keeps the screen awake, but it cannot
+  outrun iOS backgrounding.
+
+
 - iOS 16.4 or later, device only. There is no simulator slice of the pinned XCFramework.
 - The IPA is unsigned and requires re-signing to install.
 - No increased-memory-limit entitlement under a personal provisioning profile, so the largest models
