@@ -23,7 +23,46 @@ public final class HardwareAutoTuner: @unchecked Sendable {
     
     private init() {}
 
+    /// Real core counts, read from the OS rather than assumed.
+    public struct CoreCounts: Sendable {
+        public let performance: Int
+        public let efficiency: Int
+        public let total: Int
+    }
+
+    public static func detectCoreCounts() -> CoreCounts {
+        let info = ProcessInfo.processInfo
+        let perf = info.performanceCoreCount
+        let eff = info.efficiencyCoreCount
+        return CoreCounts(performance: max(1, perf), efficiency: max(0, eff), total: max(1, info.activeProcessorCount))
+    }
+
+    /// Wraps the lookup table so the thread count reflects the real performance
+    /// cores instead of a hardcoded 2, and reports the OS core counts truthfully.
     public func detectProfile() -> DeviceHardwareSpec {
+        let base = baseProfile()
+        let cores = Self.detectCoreCounts()
+        return DeviceHardwareSpec(
+            modelIdentifier: base.modelIdentifier,
+            marketingName: base.marketingName,
+            socName: base.socName,
+            gpuCores: base.gpuCores,
+            aneCores: base.aneCores,
+            aneTOPS: base.aneTOPS,
+            totalRAMGB: base.totalRAMGB,
+            maxSafeRAMLimitBytes: base.maxSafeRAMLimitBytes,
+            recommendedModelTier: base.recommendedModelTier,
+            // Max juice when cool; the thermal governor scales this back as the
+            // phone heats up. Every device previously got 2 regardless of silicon.
+            optimalThreadCount: max(2, cores.performance),
+            maxSafeContextTokens: base.maxSafeContextTokens,
+            defaultKVQuant: base.defaultKVQuant,
+            supportsSpeculative: base.supportsSpeculative,
+            is8GBPlus: base.is8GBPlus
+        )
+    }
+
+    private func baseProfile() -> DeviceHardwareSpec {
         var size: Int = 0
         sysctlbyname("hw.machine", nil, &size, nil, 0)
         var machine = [CChar](repeating: 0, count: size)

@@ -117,7 +117,14 @@ public actor LlamaEngine {
         }
 
         var mparams = llama_model_default_params()
-        mparams.n_gpu_layers = 999
+        // Every layer on the GPU: a negative value means "all layers", which is
+        // more robust than a sentinel that a very large model could exceed.
+        mparams.n_gpu_layers = -1
+        mparams.split_mode = LLAMA_SPLIT_MODE_NONE
+        mparams.main_gpu = 0
+        // Validate tensor data: catches a truncated or corrupt download at load
+        // time instead of producing garbage tokens later.
+        mparams.check_tensors = true
 
         // Honour the mlock setting. llama.cpp gates this on device support, so a
         // device that cannot lock pages silently falls back to plain mmap.
@@ -158,10 +165,24 @@ public actor LlamaEngine {
 
         var cparams = llama_context_default_params()
         cparams.n_ctx = UInt32(ctxTokens)
+
         // Prefill batch was displayed in Engine Configuration but never applied.
+        // n_ubatch is the physical GPU batch: 512 keeps the Metal pipeline full
+        // instead of submitting small work and idling the GPU between dispatches.
         let batch = max(32, ConfigEngine.shared.prefillBatchSize)
-        cparams.n_batch = UInt32(batch)
-        cparams.n_ubatch = UInt32(min(batch, 512))
+        cparams.n_batch = UInt32(max(batch, 512))
+        cparams.n_ubatch = UInt32(max(512, min(batch * 2, 2048)))
+
+        // Full GPU offload. These three were never set, so whether the KV-cache
+        // ops and the host-side tensor ops ran on the GPU depended entirely on
+        // the library default. offload_kqv keeps the whole cache on the Metal
+        // device instead of copying it back per token, and op_offload moves the
+        // remaining host tensor work onto the GPU as well.
+        cparams.offload_kqv = true
+        cparams.op_offload = true
+        // AUTO lets the library pick Flash Attention only when the head dim is
+        // supported; forcing it on breaks unsupported shapes.
+        cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_AUTO
         // The thermal governor's cap now actually applies, so the thread count the
         // dashboard reports is the one the context runs with.
         let threads = max(1, min(ConfigEngine.shared.threadCount,
@@ -199,6 +220,12 @@ public actor LlamaEngine {
         vocab = nil
         loadedModelPath = ""
         MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableDarwinBalloonPurge)
+    }
+
+    /// What the library reports about offload, so the UI can state facts.
+    public func offloadStatus() -> (gpuOffload: Bool, gpuLayers: Int) {
+        guard let m = model else { return (llama_supports_gpu_offload(), 0) }
+        return (llama_supports_gpu_offload(), Int(llama_model_n_gpu_layers(m)))
     }
 
     public func loadedModelInfo() -> (desc: String, nCtxTrain: Int, nLayers: Int, nEmbd: Int, nHeadKV: Int, nVocab: Int)? {
@@ -307,7 +334,9 @@ public actor LlamaEngine {
         var i = 0
         while i < Int(n) {
             if Task.isCancelled || cancelRequested { return }
-            let chunk = min(256, Int(n) - i)
+            // Match the physical batch the context was created with, so prefill
+            // submits full GPU-sized work instead of 256-token slivers.
+            let chunk = min(512, Int(n) - i)
             let batch = llama_batch_get_one(&tokens[i], Int32(chunk))
             if llama_decode(ctx, batch) != 0 { throw LlamaEngineError.decodeFailed }
             i += chunk

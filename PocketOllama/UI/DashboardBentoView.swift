@@ -191,7 +191,7 @@ public struct DashboardBentoView: View {
             telemetryCell(label: "DECODE THROUGHPUT", value: String(format: "%.1f tok/s", telemetry.tokensPerSecond), accent: PocketTheme.devCyan)
             telemetryCell(label: "FREE PROCESS RAM", value: String(format: "%.0f MB", telemetry.ramAvailableMB), accent: PocketTheme.terminalGreen)
             telemetryCell(label: "THERMAL STATE", value: thermal.currentThermalTier.rawValue.uppercased(), accent: thermal.isThrottled ? PocketTheme.amberWarning : PocketTheme.terminalGreen)
-            telemetryCell(label: "ACTIVE THREADS", value: "\(effectiveThreadCount) CPU Threads", accent: PocketTheme.textPrimary)
+            telemetryCell(label: "ACTIVE THREADS", value: "\(effectiveThreadCount) of \(cores.performance) P-Cores", accent: PocketTheme.textPrimary)
         }
     }
 
@@ -215,6 +215,11 @@ public struct DashboardBentoView: View {
         BonjourAdvertiser.shared.onPublishError = { message in
             DispatchQueue.main.async { self.bonjourError = message }
         }
+    }
+
+    /// Real core counts from the OS, not the lookup table.
+    private var cores: HardwareAutoTuner.CoreCounts {
+        HardwareAutoTuner.detectCoreCounts()
     }
 
     /// The thread count the loaded context actually runs with. The thermal
