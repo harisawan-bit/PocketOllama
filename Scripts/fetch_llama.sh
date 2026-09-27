@@ -2,7 +2,7 @@
 set -euo pipefail
 LLAMA_TAG="${LLAMA_TAG:-b11218}"
 DEST="Vendor/llama.xcframework"
-if [ -d "$DEST" ]; then
+if [ -d "$DEST/ios-arm64/llama.framework" ]; then
   echo "already present: $DEST"
   exit 0
 fi
@@ -13,7 +13,8 @@ curl -fL --retry 3 -o "$TMP/llama.zip" "$URL"
 unzip -q "$TMP/llama.zip" -d "$TMP/x"
 mkdir -p Vendor
 cp -R "$TMP/x/build-apple/llama.xcframework" "$DEST"
-rm -rf "$DEST"/*/dSYMs "$DEST"/*/*/dSYMs
+# Do NOT strip dSYMs: the xcframework Info.plist declares DebugSymbolsPath=dSYMs
+# and Xcode fails the build if that path is missing.
 rm -rf "$TMP"
 du -sh "$DEST"
 ls "$DEST/ios-arm64/llama.framework" | head

@@ -15,54 +15,78 @@ public final class GGUFHeaderParser: @unchecked Sendable {
 
     private init() {}
 
-    /// Parses GGUF file header in <2ms without loading weights into RAM
+    /// Reads the real GGUF header: magic, version, and the metadata keys that matter.
+    /// Only the header is read; tensor data is never touched.
     public func inspectGGUF(at path: String) -> GGUFMetadata {
         let fm = FileManager.default
         guard fm.fileExists(atPath: path),
               let attrs = try? fm.attributesOfItem(atPath: path),
               let fileSize = attrs[.size] as? UInt64 else {
-            return fallbackMetadata(fileSize: 2 * 1024 * 1024 * 1024)
+            return fallbackMetadata(fileSize: 0)
         }
 
-        // Estimate parameter size from GGUF file size
-        // Q4_K_M is roughly ~0.65GB per 1B parameters
-        let paramEstimate = Double(fileSize) / (1024.0 * 1024.0 * 1024.0 * 0.65)
-
-        var contextLength = 32768
-        var layers = 28
-        var embedDim = 3072
-        var kvHeads = 8
-        var arch = "llama"
-
-        if paramEstimate <= 0.6 {
-            // ~0.5B model (e.g. Qwen 2.5 0.5B, SmolLM2 360M)
-            contextLength = 131072
-            layers = 24
-            embedDim = 896
-            kvHeads = 2
-            arch = "qwen2"
-        } else if paramEstimate <= 1.8 {
-            // ~1B - 1.5B model (e.g. Llama 3.2 1B, DeepSeek-R1-1.5B)
-            contextLength = 131072
-            layers = 28
-            embedDim = 1536
-            kvHeads = 4
-            arch = "qwen2"
-        } else if paramEstimate <= 4.0 {
-            // ~3B model (e.g. Hermes 3 3B, Llama 3.2 3B)
-            contextLength = 131072
-            layers = 28
-            embedDim = 3072
-            kvHeads = 8
-            arch = "llama"
-        } else {
-            // ~7B - 8B model (e.g. Hermes 3 8B, Qwen 2.5 7B)
-            contextLength = 32768
-            layers = 32
-            embedDim = 4096
-            kvHeads = 8
-            arch = "llama"
+        guard let handle = FileHandle(forReadingAtPath: path) else {
+            return fallbackMetadata(fileSize: fileSize)
         }
+        defer { try? handle.close() }
+
+        func read<T: FixedWidthInteger>(_ type: T.Type) -> T? {
+            let size = MemoryLayout<T>.size
+            guard let data = try? handle.read(upToCount: size), data.count == size else { return nil }
+            return data.withUnsafeBytes { $0.loadUnaligned(as: T.self) }
+        }
+
+        guard let magic = read(UInt32.self) else { return fallbackMetadata(fileSize: fileSize) }
+        let ggufMagic: UInt32 = 0x46554747   // "GGUF" little-endian
+        guard magic == ggufMagic else { return fallbackMetadata(fileSize: fileSize) }
+
+        _ = read(UInt32.self)              // version
+        _ = read(UInt64.self)              // tensor count
+        guard let kvCount = read(UInt64.self) else { return fallbackMetadata(fileSize: fileSize) }
+
+        var arch = ""
+        var contextLength = 0
+        var layers = 0
+        var embedDim = 0
+        var kvHeads = 0
+
+        for _ in 0..<min(kvCount, 16384) {
+            guard let keyLen = read(UInt64.self), keyLen <= 512,
+                  let keyData = try? handle.read(upToCount: Int(keyLen)), keyData.count == Int(keyLen),
+                  let key = String(data: keyData, encoding: .utf8),
+                  let valueType = read(UInt32.self) else { break }
+
+            switch valueType {
+            case 8:   // STRING
+                guard let valLen = read(UInt64.self), valLen <= 512,
+                      let valData = try? handle.read(upToCount: Int(valLen)),
+                      let value = String(data: valData, encoding: .utf8) else { break }
+                if key == "general.architecture" { arch = value }
+                if key.hasSuffix(".context_length") { contextLength = Int(value) ?? 0 }
+            case 9, 10:  // UINT32, INT32
+                let v = (valueType == 9 ? read(UInt32.self).map { Int($0) } : read(Int32.self).map { Int($0) }) ?? 0
+                if key.hasSuffix(".block_count") { layers = v }
+                if key.hasSuffix(".embedding_length") { embedDim = v }
+                if key.hasSuffix(".attention.head_count_kv") { kvHeads = v }
+            case 11, 12:  // UINT64, INT64
+                _ = valueType == 11 ? read(UInt64.self) : read(Int64.self)
+            case 13: _ = read(Float.self)
+            case 14: _ = read(Double.self)
+            case 15:  // ARRAY: skip by scanning, bail if we cannot
+                guard let arrType = read(UInt32.self), let arrLen = read(UInt64.self) else { break }
+                skipArray(handle: handle, elementType: arrType, count: arrLen, reader: read)
+            default:
+                break
+            }
+        }
+
+        guard !arch.isEmpty, layers > 0, embedDim > 0 else {
+            return fallbackMetadata(fileSize: fileSize)
+        }
+        if kvHeads == 0 { kvHeads = 1 }
+        if contextLength == 0 { contextLength = 32768 }
+
+        let params = 12.0 * Double(embedDim) * Double(embedDim) * Double(layers) / 1_000_000_000.0
 
         return GGUFMetadata(
             architecture: arch,
@@ -71,8 +95,28 @@ public final class GGUFHeaderParser: @unchecked Sendable {
             embeddingLength: embedDim,
             headCountKV: kvHeads,
             fileSizeBytes: fileSize,
-            estimatedParamCountBillion: paramEstimate
+            estimatedParamCountBillion: params
         )
+    }
+
+    private func skipArray<T: FixedWidthInteger>(
+        handle: FileHandle,
+        elementType: UInt32,
+        count: UInt64,
+        reader: (T.Type) -> T?
+    ) {
+        let stride: Int
+        switch elementType {
+        case 8: return            // string array, cannot cheaply skip
+        case 9, 11: stride = 4
+        case 10, 12: stride = 4
+        case 13: stride = 4
+        case 14: stride = 8
+        case 15: stride = 0     // nested array
+        default: stride = 4
+        }
+        guard stride > 0, count < 1_000_000 else { return }
+        try? handle.seek(toOffset: handle.offsetInFile + UInt64(stride * Int(count)))
     }
 
     /// Calculates KV-cache memory bytes required for a given context token count
@@ -92,8 +136,9 @@ public final class GGUFHeaderParser: @unchecked Sendable {
         }
 
         // KV cache formula: 2 * n_layers * n_kv_heads * (n_embd / n_heads) * bytesPerElement * n_ctx
-        let headDim = Double(metadata.embeddingLength) / Double(max(1, metadata.headCountKV * 4))
-        let bytesPerToken = 2.0 * Double(metadata.layerCount) * Double(metadata.headCountKV) * headDim * bytesPerElement
+        let headCount = max(1, metadata.headCountKV)
+        let headDim = Double(metadata.embeddingLength) / Double(headCount)
+        let bytesPerToken = 2.0 * Double(metadata.layerCount) * Double(headCount) * headDim * bytesPerElement
 
         return UInt64(Double(contextTokens) * bytesPerToken)
     }
@@ -112,8 +157,9 @@ public final class GGUFHeaderParser: @unchecked Sendable {
         let availableForKV = usableProcessRAMBytes - metadata.fileSizeBytes - safetyBuffer
 
         let bytesPerElement: Double = (kvQuant.lowercased() == "q4_0") ? 0.5625 : ((kvQuant.lowercased() == "q8_0") ? 1.0625 : 2.0)
-        let headDim = Double(metadata.embeddingLength) / Double(max(1, metadata.headCountKV * 4))
-        let bytesPerToken = 2.0 * Double(metadata.layerCount) * Double(metadata.headCountKV) * headDim * bytesPerElement
+        let headCount = max(1, metadata.headCountKV)
+        let headDim = Double(metadata.embeddingLength) / Double(headCount)
+        let bytesPerToken = 2.0 * Double(metadata.layerCount) * Double(headCount) * headDim * bytesPerElement
 
         let maxTokens = Int(Double(availableForKV) / bytesPerToken)
 

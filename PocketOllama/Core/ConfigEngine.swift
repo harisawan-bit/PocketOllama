@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import llama
 
 public enum SamplingPreset: String, CaseIterable, Identifiable {
     case reasoning = "Reasoning / DeepSeek"
@@ -95,6 +96,59 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
             self.contextWindowTokens = self.recommendedContextTokens
             self.recalculateKVMemory(context: self.contextWindowTokens, kvQuant: self.kvQuantization, meta: metadata)
         }
+    }
+
+    /// Updates dynamic recommendations from a loaded llama_model (authoritative metadata)
+    public func updateForLoadedModel(model: OpaquePointer) {
+        let nCtxTrain = Int(llama_model_n_ctx_train(model))
+        let nLayers = Int(llama_model_n_layer(model))
+        let nEmbd = Int(llama_model_n_embd(model))
+        let nHeadKV = Int(llama_model_n_head_kv(model))
+
+        var buf = [CChar](repeating: 0, count: 256)
+        llama_model_desc(model, &buf, 256)
+        let desc = String(cString: buf)
+
+        let meta = GGUFMetadata(
+            architecture: Self.archFromDesc(desc),
+            contextLengthTrained: nCtxTrain,
+            layerCount: nLayers,
+            embeddingLength: nEmbd,
+            headCountKV: nHeadKV,
+            fileSizeBytes: 0,
+            estimatedParamCountBillion: 12.0 * Double(nEmbd) * Double(nEmbd) * Double(nLayers) / 1_000_000_000.0
+        )
+
+        let hw = HardwareAutoTuner.shared.detectProfile()
+        let maxSafe = GGUFHeaderParser.shared.calculateMaxSafeContext(
+            metadata: meta,
+            usableProcessRAMBytes: hw.maxSafeRAMLimitBytes,
+            kvQuant: self.kvQuantization
+        )
+
+        DispatchQueue.main.async {
+            self.maxSafeContextTokens = maxSafe
+            let params = meta.estimatedParamCountBillion
+            if params <= 0.6 {
+                self.recommendedContextTokens = min(maxSafe, 65536)
+            } else if params <= 1.8 {
+                self.recommendedContextTokens = min(maxSafe, 32768)
+            } else if params <= 4.0 {
+                self.recommendedContextTokens = min(maxSafe, 16384)
+            } else {
+                self.recommendedContextTokens = min(maxSafe, 8192)
+            }
+            self.contextWindowTokens = self.recommendedContextTokens
+            self.recalculateKVMemory(context: self.contextWindowTokens, kvQuant: self.kvQuantization, meta: meta)
+        }
+    }
+
+    private static func archFromDesc(_ desc: String) -> String {
+        let lower = desc.lowercased()
+        if lower.contains("qwen") { return "qwen2" }
+        if lower.contains("mistral") { return "mistral" }
+        if lower.contains("gemma") { return "gemma" }
+        return "llama"
     }
 
     public func applyPreset(_ preset: SamplingPreset) {
