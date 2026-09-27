@@ -28,6 +28,8 @@ targets:
       path: PocketOllama/Resources/Info.plist
       properties:
         CFBundleDisplayName: "PocketOllama"
+        CFBundleShortVersionString: "2.2.2"
+        CFBundleVersion: "4"
         UILaunchScreen: {}
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
