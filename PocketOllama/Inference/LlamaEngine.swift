@@ -152,8 +152,12 @@ public actor LlamaEngine {
         let batch = max(32, ConfigEngine.shared.prefillBatchSize)
         cparams.n_batch = UInt32(batch)
         cparams.n_ubatch = UInt32(min(batch, 512))
-        cparams.n_threads = Int32(ConfigEngine.shared.threadCount)
-        cparams.n_threads_batch = Int32(ConfigEngine.shared.threadCount)
+        // The thermal governor's cap now actually applies, so the thread count the
+        // dashboard reports is the one the context runs with.
+        let threads = max(1, min(ConfigEngine.shared.threadCount,
+                                 ThermalGovernor.shared.activeThreadCount))
+        cparams.n_threads = Int32(threads)
+        cparams.n_threads_batch = Int32(threads)
 
         // Apply the chosen KV cache quantisation. Leaving this at the f16 default
         // is what the "q4_0" recommendation was meant to avoid, but it was never
@@ -180,7 +184,7 @@ public actor LlamaEngine {
         if let m = model { llama_model_free(m); model = nil }
         vocab = nil
         loadedModelPath = ""
-        MemoryScavenger.shared.purgeAndScavengeRAM()
+        MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableDarwinBalloonPurge)
     }
 
     public func loadedModelInfo() -> (desc: String, nCtxTrain: Int, nLayers: Int, nEmbd: Int, nHeadKV: Int, nVocab: Int)? {
@@ -303,7 +307,10 @@ public actor LlamaEngine {
         var utf8Buffer = PartialUTF8Decoder()
 
         while produced < config.maxTokens {
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                lastCompletionTokens = produced
+                return
+            }
 
             await ThermalGovernor.shared.yieldIfThrottled()
 

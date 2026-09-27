@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Network
 
 public struct LogEntry: Identifiable, Sendable {
     public let id = UUID()
@@ -13,10 +14,15 @@ public struct LogEntry: Identifiable, Sendable {
     public let tokensPerSecond: Double?
 
     public var formattedTime: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss.SSS"
-        return formatter.string(from: timestamp)
+        LogEntry.timeFormatter.string(from: timestamp)
     }
+
+    /// Static: this runs once per visible log row on every SwiftUI render.
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
 
     public var summary: String {
         var base = "[\(formattedTime)] \(method) \(path) -> \(statusCode)"
@@ -64,6 +70,12 @@ public final class RequestLogger: ObservableObject, @unchecked Sendable {
                 self.recentLogs.removeLast()
             }
         }
+    }
+
+    /// Real peer address for a connection, or nil when it cannot be determined.
+    public func clientIP(for connection: NWConnection?) -> String {
+        guard let connection else { return "unknown" }
+        return connection.endpoint.debugDescription
     }
 
     public func clear() {

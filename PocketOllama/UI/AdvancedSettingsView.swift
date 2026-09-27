@@ -59,7 +59,7 @@ public struct AdvancedSettingsView: View {
                     .font(.system(size: 9, weight: .black, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
                 Spacer()
-                Text("ANE: \(String(format: "%.0f", hardware.aneTOPS)) TOPS")
+                Text("Accelerator: Metal GPU (\(hardware.gpuCores) cores)")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)

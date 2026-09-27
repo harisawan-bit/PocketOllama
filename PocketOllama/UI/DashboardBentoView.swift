@@ -14,6 +14,7 @@ public struct DashboardBentoView: View {
     @State private var copyNotification: String? = nil
     @State private var reloadingForContext: Bool = false
     @State private var contextReloadError: String? = nil
+    @State private var bonjourError: String? = nil
 
     let hardware = HardwareAutoTuner.shared.detectProfile()
 
@@ -58,6 +59,7 @@ public struct DashboardBentoView: View {
         .sheet(isPresented: $showingQRConnect) {
             QRConnectSheet(endpointURL: server.apiEndpointURL, hostname: config.serverHostname)
         }
+        .onAppear { watchBonjour() }
     }
 
     // MARK: - Top System Status Bar
@@ -74,7 +76,7 @@ public struct DashboardBentoView: View {
 
             Spacer()
 
-            Text("\(hardware.socName) • \(String(format: "%.0f", hardware.totalRAMGB))GB • \(String(format: "%.0f", hardware.aneTOPS)) TOPS ANE")
+            Text("\(hardware.socName) • \(String(format: "%.0f", hardware.totalRAMGB))GB • Metal GPU \(hardware.gpuCores) cores")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundColor(PocketTheme.textSecondary)
         }
@@ -103,6 +105,13 @@ public struct DashboardBentoView: View {
                 .foregroundColor(PocketTheme.devCyan)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
+
+            if let err = bonjourError {
+                Text(err)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(PocketTheme.amberWarning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             // Quick Copy & QR Strip
             HStack(spacing: 8) {
@@ -182,7 +191,7 @@ public struct DashboardBentoView: View {
             telemetryCell(label: "DECODE THROUGHPUT", value: String(format: "%.1f tok/s", telemetry.tokensPerSecond), accent: PocketTheme.devCyan)
             telemetryCell(label: "FREE PROCESS RAM", value: String(format: "%.0f MB", telemetry.ramAvailableMB), accent: PocketTheme.terminalGreen)
             telemetryCell(label: "THERMAL STATE", value: thermal.currentThermalTier.rawValue.uppercased(), accent: thermal.isThrottled ? PocketTheme.amberWarning : PocketTheme.terminalGreen)
-            telemetryCell(label: "ACTIVE THREADS", value: "\(thermal.activeThreadCount) P-Cores Active", accent: PocketTheme.textPrimary)
+            telemetryCell(label: "ACTIVE THREADS", value: "\(effectiveThreadCount) CPU Threads", accent: PocketTheme.textPrimary)
         }
     }
 
@@ -198,6 +207,20 @@ public struct DashboardBentoView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .devCard(cornerRadius: 8)
+    }
+
+    /// Report an mDNS registration failure instead of showing a .local name that
+    /// silently never resolves.
+    private func watchBonjour() {
+        BonjourAdvertiser.shared.onPublishError = { message in
+            DispatchQueue.main.async { self.bonjourError = message }
+        }
+    }
+
+    /// The thread count the loaded context actually runs with. The thermal
+    /// governor's own number was displayed here but never applied to the context.
+    private var effectiveThreadCount: Int {
+        min(config.threadCount, max(1, thermal.activeThreadCount))
     }
 
     /// Re-initialises the llama context at the newly chosen window size.

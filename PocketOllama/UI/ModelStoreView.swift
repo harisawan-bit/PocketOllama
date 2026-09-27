@@ -253,6 +253,27 @@ public struct ModelStoreView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                         }
                     } else {
+                        if let failure = downloader.activeDownloads[item.id]?.errorMessage {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(failure)
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundColor(PocketTheme.roseAlert)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Button {
+                                    downloader.clearDownload(modelId: item.id)
+                                    if let url = item.downloadURL {
+                                        downloader.startDownload(modelId: item.id, urlString: url)
+                                    }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "arrow.clockwise")
+                                        Text("Retry")
+                                    }
+                                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                }
+                                .foregroundColor(PocketTheme.devCyan)
+                            }
+                        } else {
                         Button(action: {
                             if let url = item.downloadURL {
                                 downloader.startDownload(modelId: item.id, urlString: url)
@@ -272,6 +293,7 @@ public struct ModelStoreView: View {
                                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                                     .stroke(PocketTheme.devCyan.opacity(0.3), lineWidth: 1)
                             )
+                        }
                         }
                     }
                 }

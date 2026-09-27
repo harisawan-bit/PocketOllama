@@ -106,9 +106,8 @@ public final class JetsamShield: @unchecked Sendable {
     public func compactTokenWindow(_ tokens: [llama_token], limit: Int) -> [llama_token] {
         guard tokens.count > limit, limit > 0 else { return tokens }
         let headCount = max(1, limit / 4)
-        let tailCount = max(1, limit - headCount - 1)
-        return Array(tokens.prefix(headCount))
-            + [llama_token(0)]
-            + Array(tokens.suffix(tailCount))
+        // No separator token: llama_token(0) is <unk> in most vocabs and injecting
+        // it mid-prompt can corrupt generation. Head and tail are what matter.
+        return Array(tokens.prefix(headCount)) + Array(tokens.suffix(limit - headCount))
     }
 }

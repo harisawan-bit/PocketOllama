@@ -27,6 +27,7 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
     private var downloadTasks: [String: URLSessionDownloadTask] = [:]
     private var taskToModelId: [Int: String] = [:]
     private var lastBytesWritten: [String: (Int64, Date)] = [:]
+    private var startedAt: [String: Date] = [:]
     private var session: URLSession!
 
     private override init() {
@@ -39,12 +40,20 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
     }
 
     public func startDownload(modelId: String, urlString: String) {
-        guard let url = URL(string: urlString) else { return }
+        guard let url = URL(string: urlString), url.scheme?.hasPrefix("http") == true else {
+            publishFailure(modelId: modelId, message: "Invalid download URL")
+            return
+        }
+
+        // A second tap used to orphan the first task, leaving two tasks writing
+        // the same destination file.
+        downloadTasks[modelId]?.cancel()
 
         let task = session.downloadTask(with: url)
         downloadTasks[modelId] = task
         taskToModelId[task.taskIdentifier] = modelId
         lastBytesWritten[modelId] = (0, Date())
+        startedAt[modelId] = Date()
 
         let initialProgress = DownloadProgress(
             modelId: modelId,
@@ -65,6 +74,13 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
         print("[ModelDownloader] Started background download for: \(modelId)")
     }
 
+    /// Drops a finished or failed entry so the row returns to its idle state.
+    public func clearDownload(modelId: String) {
+        DispatchQueue.main.async {
+            self.activeDownloads.removeValue(forKey: modelId)
+        }
+    }
+
     public func cancelDownload(modelId: String) {
         if let task = downloadTasks[modelId] {
             task.cancel()
@@ -72,6 +88,22 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
             DispatchQueue.main.async {
                 self.activeDownloads.removeValue(forKey: modelId)
             }
+        }
+    }
+
+    private func publishFailure(modelId: String, message: String) {
+        let existing = activeDownloads[modelId]
+        DispatchQueue.main.async {
+            self.activeDownloads[modelId] = DownloadProgress(
+                modelId: modelId,
+                bytesDownloaded: existing?.bytesDownloaded ?? 0,
+                totalBytesExpected: existing?.totalBytesExpected ?? 0,
+                fractionCompleted: existing?.fractionCompleted ?? 0,
+                speedBytesPerSec: 0,
+                isDownloading: false,
+                isCompleted: false,
+                errorMessage: message
+            )
         }
     }
 
@@ -115,6 +147,23 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
         }
     }
 
+    /// Without this, a failed or cancelled download left the progress bar stuck.
+    public func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        guard let modelId = taskToModelId[task.taskIdentifier] else { return }
+        taskToModelId.removeValue(forKey: task.taskIdentifier)
+        downloadTasks.removeValue(forKey: modelId)
+        lastBytesWritten.removeValue(forKey: modelId)
+
+        if let error = error as NSError? {
+            if error.code == NSURLErrorCancelled { return }   // user tapped cancel
+            publishFailure(modelId: modelId, message: error.localizedDescription)
+        }
+    }
+
     public func urlSession(
         _ session: URLSession,
         downloadTask: URLSessionDownloadTask,
@@ -138,7 +187,7 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
                 bytesDownloaded: (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? 0,
                 totalBytesExpected: (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? 0,
                 fractionCompleted: 1.0,
-                speedBytesPerSec: 0.0,
+                speedBytesPerSec: averageSpeed(modelId: modelId, bytes: (try? fm.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? 0),
                 isDownloading: false,
                 isCompleted: true,
                 errorMessage: nil
@@ -152,7 +201,15 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
             }
         } catch {
             print("[ModelDownloader] Error moving file: \(error)")
+            publishFailure(modelId: modelId, message: "Download finished but could not be saved: \(error.localizedDescription)")
         }
+    }
+
+    /// Whole-file average, since the last progress callback carried the real one.
+    private func averageSpeed(modelId: String, bytes: Int64) -> Double {
+        guard let start = startedAt[modelId] else { return 0 }
+        let elapsed = Date().timeIntervalSince(start)
+        return elapsed > 0 ? Double(bytes) / elapsed : 0
     }
 
     public func getModelsDirectory() -> URL {

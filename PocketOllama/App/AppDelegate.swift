@@ -12,7 +12,7 @@ public final class AppDelegate: NSObject, UIApplicationDelegate {
         // 2. Initialize Hardware & Thermal Governors
         _ = HardwareAutoTuner.shared.detectProfile()
         _ = ThermalGovernor.shared
-        _ = MemoryScavenger.shared.purgeAndScavengeRAM()
+        _ = MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableDarwinBalloonPurge)
 
         // 3. Configure Audio Session for Uninterruptible Overnight Runs
         do {
@@ -55,6 +55,6 @@ public final class AppDelegate: NSObject, UIApplicationDelegate {
 
     public func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
         print("[PocketOllama] Kernel memory pressure alert. Triggering RAM scavenger...")
-        MemoryScavenger.shared.purgeAndScavengeRAM()
+        MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableDarwinBalloonPurge)
     }
 }

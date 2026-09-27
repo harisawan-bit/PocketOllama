@@ -28,10 +28,14 @@ public final class MemoryScavenger: @unchecked Sendable {
     }
 
     /// Aggressively purges caches and signals Darwin VM to compress background apps and free RAM
+    /// - Parameter aggressive: runs the transient balloon pulse and heap relief.
+    ///   The toggle in Engine Configuration maps to this; it was previously never read.
     @discardableResult
-    public func purgeAndScavengeRAM() -> UInt64 {
+    public func purgeAndScavengeRAM(aggressive: Bool = true) -> UInt64 {
         // 1. Drain top-level caches
         URLCache.shared.removeAllCachedResponses()
+
+        guard aggressive else { return getAvailableMemoryBytes() }
 
         // 2. Darwin Memory Balloon Pulse: Briefly signals memory manager to reclaim inactive pages
         autoreleasepool {

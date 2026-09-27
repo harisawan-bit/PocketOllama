@@ -17,13 +17,35 @@ public final class TelemetryManager: ObservableObject, @unchecked Sendable {
         startPolling()
     }
 
-    public func recordTokensGenerated(count: Int, durationSeconds: Double) {
-        let tps = (durationSeconds > 0) ? Double(count) / durationSeconds : 0
+    private var windowStart = Date()
+    private var windowTokens = 0
+
+    /// Begins a decode window. Throughput is measured from here so prefill time is
+    /// excluded, matching how the benchmark computes tokens per second.
+    public func beginMeasurement() {
+        windowStart = Date()
+        windowTokens = 0
+    }
+
+    /// Records one decoded token and publishes a live rolling rate.
+    public func recordTokenTick() {
+        windowTokens += 1
+        let elapsed = Date().timeIntervalSince(windowStart)
+        guard elapsed > 0 else { return }
+        let tps = Double(windowTokens) / elapsed
         DispatchQueue.main.async {
             self.tokensPerSecond = tps
-            self.totalTokensServed += UInt64(count)
-            self.sparklineHistory.removeFirst()
+            self.totalTokensServed += 1
+            if self.sparklineHistory.count >= 20 {
+                self.sparklineHistory.removeFirst()
+            }
             self.sparklineHistory.append(tps)
+        }
+    }
+
+    public func recordTokensGenerated(count: Int, durationSeconds: Double) {
+        DispatchQueue.main.async {
+            self.totalTokensServed += UInt64(max(0, count - self.windowTokens))
         }
     }
 

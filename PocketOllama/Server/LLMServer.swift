@@ -56,7 +56,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     self.isRunning = true
                     self.boundPort = actualPort
-                    BonjourAdvertiser.shared.startAdvertising(port: actualPort)
+                    BonjourAdvertiser.shared.startAdvertising(port: actualPort, hostname: ConfigEngine.shared.serverHostname)
                     RequestLogger.shared.log(method: "SYSTEM", path: "Server listening on \(self.apiEndpointURL)", statusCode: 200)
                 }
             case .failed, .cancelled:
@@ -326,6 +326,8 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
 
         let stream = await LlamaEngine.shared.streamInference(prompt: prompt, config: config)
         let start = Date()
+        let clientIP = RequestLogger.shared.clientIP(for: connection)
+        var firstTokenAt: Date?
         var completionText = ""
         var completionReasoning = ""
         var promptTokens = 0
@@ -341,6 +343,13 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                 for try await delta in stream {
                     completionText += delta.text
                     completionReasoning += delta.reasoningText ?? ""
+
+                    if firstTokenAt == nil {
+                        firstTokenAt = Date()
+                        TelemetryManager.shared.beginMeasurement()
+                    } else {
+                        TelemetryManager.shared.recordTokenTick()
+                    }
 
                     let chunk: String
                     if isOllama {
@@ -376,9 +385,11 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
 
             let usage = await LlamaEngine.shared.lastUsage
             promptTokens = usage.prompt
-            let duration = max(0.001, Date().timeIntervalSince(start))
+            // Decode window only, so reported throughput matches the benchmark.
+            let decodeStart = firstTokenAt ?? start
+            let duration = max(0.001, Date().timeIntervalSince(decodeStart))
             TelemetryManager.shared.recordTokensGenerated(count: usage.completion, durationSeconds: duration)
-            RequestLogger.shared.log(method: "POST", path: path, statusCode: 200,
+            RequestLogger.shared.log(method: "POST", path: path, clientIP: clientIP, statusCode: 200,
                                      tokensGenerated: usage.completion, durationSeconds: duration)
 
             if path == "/v1/chat/completions" {
@@ -399,9 +410,11 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             }
         } else {
             do {
+                TelemetryManager.shared.beginMeasurement()
                 for try await delta in stream {
                     completionText += delta.text
                     completionReasoning += delta.reasoningText ?? ""
+                    if firstTokenAt == nil { firstTokenAt = Date() } else { TelemetryManager.shared.recordTokenTick() }
                     if delta.isFinished { break }
                 }
             } catch {
@@ -413,7 +426,8 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
 
             let usage = await LlamaEngine.shared.lastUsage
             promptTokens = usage.prompt
-            let duration = max(0.001, Date().timeIntervalSince(start))
+            let decodeStart = firstTokenAt ?? start
+            let duration = max(0.001, Date().timeIntervalSince(decodeStart))
             TelemetryManager.shared.recordTokensGenerated(count: usage.completion, durationSeconds: duration)
 
             let body: String
@@ -433,7 +447,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                 """
             }
             sendRaw(connection: connection, status: "200 OK", contentType: "application/json", body: body)
-            RequestLogger.shared.log(method: "POST", path: path, statusCode: 200,
+            RequestLogger.shared.log(method: "POST", path: path, clientIP: clientIP, statusCode: 200,
                                      tokensGenerated: usage.completion, durationSeconds: duration)
         }
     }
