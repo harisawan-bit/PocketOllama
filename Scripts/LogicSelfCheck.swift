@@ -157,8 +157,20 @@ struct LogicSelfCheck {
         // The decode loop tests the suffix on the accumulated text. If this ever
         // regressed to testing a partial buffer, a stop token split across two
         // tokens would be missed and the answer would run on past it.
-        check("detects a stop token that lands mid-piece",
-              StopMatching.match("the answer is STOP and then more", stopTokens: ["STOP"]) == "STOP")
+        // The real scenario: a stop token split across two decode steps must
+        // still be caught once the second piece lands, and must not fire early.
+        var acc = ""
+        var firedAt: Int? = nil
+        for (i, piece) in ["the answer is ", "ST", "OP", " and more"].enumerated() {
+            acc += piece
+            if firedAt == nil, StopMatching.match(acc, stopTokens: ["STOP"]) != nil {
+                firedAt = i
+            }
+        }
+        check("stop token split across pieces is caught (at \(firedAt.map(String.init) ?? "never"))",
+              firedAt == 2)
+        check("a stop token is only a suffix, never a substring",
+              StopMatching.match("the answer is STOP and then more", stopTokens: ["STOP"]) == nil)
         check("no false positive without the token",
               StopMatching.match("the answer is finished", stopTokens: ["STOP"]) == nil)
         check("longest matching stop token wins",
