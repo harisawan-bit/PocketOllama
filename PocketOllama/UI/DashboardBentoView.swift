@@ -76,7 +76,7 @@ public struct DashboardBentoView: View {
 
             Spacer()
 
-            Text("\(hardware.socName) • \(String(format: "%.0f", hardware.totalRAMGB))GB • Metal GPU \(hardware.gpuCores) cores")
+            Text("\(hardware.socName) • \(String(format: "%.0f", hardware.totalRAMGB))GB • \(hardware.gpuName)")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundColor(PocketTheme.textSecondary)
         }

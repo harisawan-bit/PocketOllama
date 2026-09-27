@@ -59,7 +59,7 @@ public struct AdvancedSettingsView: View {
                     .font(.system(size: 9, weight: .black, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
                 Spacer()
-                Text("Accelerator: Metal GPU (\(hardware.gpuCores) cores). Neural Engine not used.")
+                Text("Accelerator: \(hardware.gpuName). Neural Engine not used.")
                     .font(.system(size: 9, weight: .bold, design: .monospaced))
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
