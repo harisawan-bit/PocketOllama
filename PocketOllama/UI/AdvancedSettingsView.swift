@@ -198,7 +198,7 @@ public struct AdvancedSettingsView: View {
             }
             .toggleStyle(SwitchToggleStyle(tint: PocketTheme.devCyan))
 
-            Toggle(isOn: $config.enableDarwinBalloonPurge) {
+            Toggle(isOn: $config.enableAllocatorRelief) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Darwin VM Balloon Eviction")
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))

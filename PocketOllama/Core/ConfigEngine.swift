@@ -39,7 +39,10 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
 
     // Memory Controls
     @Published public var enableMemoryLock: Bool = true
-    @Published public var enableDarwinBalloonPurge: Bool = true
+    /// Relieves the malloc zone after a purge. Previously named for a "Darwin
+    /// balloon" that allocated and discarded 64 MB without reclaiming anything;
+    /// that code is gone.
+    @Published public var enableAllocatorRelief: Bool = true
 
     // Server Controls
     @Published public var serverPort: UInt16 = 11434
@@ -70,6 +73,14 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
             .sink { [weak self] (ctx, kv) in
                 self?.recalculateKVMemory(context: ctx, kvQuant: kv)
             }
+            .store(in: &cancellables)
+
+        // The engine uses min(configured threads, thermal cap), so the thermal
+        // governor's base has to follow the user's choice. It was set once from the
+        // hardware profile and never updated, which meant the thread Stepper did
+        // nothing above the detected core count.
+        $threadCount
+            .sink { count in ThermalGovernor.shared.setBaseThreads(count) }
             .store(in: &cancellables)
     }
 

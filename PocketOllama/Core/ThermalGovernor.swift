@@ -33,8 +33,21 @@ public final class ThermalGovernor: ObservableObject, @unchecked Sendable {
         evaluateThermalState()
     }
 
+    /// Hop to the main thread before touching @Published state. This is reached
+    /// from ConfigEngine's Combine sink and from the inference actor, neither of
+    /// which is the main thread, and publishing from a background thread trips
+    /// SwiftUI's main-thread assertion.
     public func setBaseThreads(_ count: Int) {
-        self.baseThreadCount = max(1, count)
+        let clamped = max(1, count)
+        if Thread.isMainThread {
+            apply(base: clamped)
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.apply(base: clamped) }
+        }
+    }
+
+    private func apply(base: Int) {
+        self.baseThreadCount = base
         evaluateThermalState()
     }
 

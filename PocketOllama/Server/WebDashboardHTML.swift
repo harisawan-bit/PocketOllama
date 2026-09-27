@@ -107,7 +107,7 @@ public enum WebDashboardHTML {
 
                     const assistantBubble = document.createElement('div');
                     assistantBubble.className = 'msg assistant';
-                    assistantBubble.innerHTML = '<em>Thinking...</em>';
+                    assistantBubble.textContent = 'Thinking...';
                     msgs.appendChild(assistantBubble);
                     msgs.scrollTop = msgs.scrollHeight;
 
@@ -128,48 +128,96 @@ public enum WebDashboardHTML {
                         if (!res.ok) {
                             let detail = '';
                             try { detail = (await res.text()).slice(0, 300); } catch (e) {}
-                            assistantBubble.innerHTML = '<span style="color: #ef4444;">HTTP ' + res.status +
-                                (detail ? ' - ' + detail : '') + '</span>';
+                            const note = document.createElement('span');
+                            note.style.color = '#ef4444';
+                            note.textContent = 'HTTP ' + res.status + (detail ? ' - ' + detail : '');
+                            assistantBubble.textContent = '';
+                            assistantBubble.appendChild(note);
                             return;
                         }
 
                         const reader = res.body.getReader();
-                        const decoder = new TextDecoder();
-                        assistantBubble.innerHTML = '';
+                        // {stream:true} so a multi-byte character split across two
+                        // network reads is not corrupted into U+FFFD.
+                        const decoder = new TextDecoder('utf-8');
+                        assistantBubble.textContent = '';
+                        const thoughtBox = document.createElement('div');
+                        thoughtBox.className = 'thought-box';
+                        const thoughtLabel = document.createElement('strong');
+                        thoughtLabel.textContent = 'THOUGHT: ';
+                        const thoughtText = document.createElement('span');
+                        thoughtBox.appendChild(thoughtLabel);
+                        thoughtBox.appendChild(thoughtText);
+                        const answerText = document.createElement('span');
+                        assistantBubble.appendChild(thoughtBox);
+                        assistantBubble.appendChild(answerText);
+
                         let accumulatedContent = '';
                         let accumulatedReasoning = '';
+                        // A network read can end anywhere, including halfway
+                        // through a data: line. Without carrying the remainder
+                        // over, JSON.parse failed on a fragment and the empty
+                        // catch swallowed it, so tokens intermittently vanished.
+                        let pending = '';
+                        // Rendered on a timer instead of per token: assigning
+                        // on every token forced a full re-layout per token.
+                        let dirty = false;
+                        const render = () => {
+                            if (!dirty) return;
+                            dirty = false;
+                            thoughtBox.style.display = accumulatedReasoning ? '' : 'none';
+                            // textContent, never innerHTML. The model output is
+                            // untrusted: assigning it to innerHTML let a model
+                            // return markup that ran in this origin and read the
+                            // API key straight out of localStorage.
+                            thoughtText.textContent = accumulatedReasoning;
+                            answerText.textContent = accumulatedContent;
+                            msgs.scrollTop = msgs.scrollHeight;
+                        };
+                        const renderTimer = setInterval(render, 60);
 
-                        while (true) {
-                            const { value, done } = await reader.read();
-                            if (done) break;
-                            const chunk = decoder.decode(value);
-                            const lines = chunk.split('\\n');
+                        const applyLine = (line) => {
+                            const trimmed = line.trim();
+                            if (!trimmed.startsWith('data: ')) return;
+                            const payload = trimmed.substring(6).trim();
+                            if (!payload || payload === '[DONE]') return;
+                            let json;
+                            try { json = JSON.parse(payload); } catch (e) { return; }
+                            const delta = json && json.choices && json.choices[0]
+                                ? json.choices[0].delta : null;
+                            if (!delta) return;
+                            if (delta.reasoning_content) {
+                                accumulatedReasoning += delta.reasoning_content;
+                                dirty = true;
+                            }
+                            if (delta.content) {
+                                accumulatedContent += delta.content;
+                                dirty = true;
+                            }
+                        };
 
-                            for (const line of lines) {
-                                if (line.startsWith('data: ') && !line.includes('[DONE]')) {
-                                    try {
-                                        const json = JSON.parse(line.substring(6));
-                                        const delta = json.choices[0].delta;
-                                        if (delta.reasoning_content) {
-                                            accumulatedReasoning += delta.reasoning_content;
-                                        }
-                                        if (delta.content) {
-                                            accumulatedContent += delta.content;
-                                        }
-
-                                        let fullHTML = '';
-                                        if (accumulatedReasoning) {
-                                            fullHTML += '<div class="thought-box"><strong>THOUGHT:</strong> ' + accumulatedReasoning + '</div>';
-                                        }
-                                        fullHTML += accumulatedContent.replace(/\\n/g, '<br/>');
-                                        assistantBubble.innerHTML = fullHTML;
-                                        msgs.scrollTop = msgs.scrollHeight;
-                                    } catch (e) {}
+                        try {
+                            while (true) {
+                                const { value, done } = await reader.read();
+                                if (done) break;
+                                pending += decoder.decode(value, { stream: true });
+                                let nl;
+                                while ((nl = pending.indexOf('\n')) !== -1) {
+                                    applyLine(pending.slice(0, nl));
+                                    pending = pending.slice(nl + 1);
                                 }
                             }
+                            pending += decoder.decode();
+                            if (pending.trim()) applyLine(pending);
+                        } finally {
+                            clearInterval(renderTimer);
+                            render();
                         }
                     } catch (err) {
-                        assistantBubble.innerHTML = '<span style="color: #ef4444;">Error connecting to local server: ' + err.message + '</span>';
+                        const note = document.createElement('span');
+                        note.style.color = '#ef4444';
+                        note.textContent = 'Error connecting to local server: ' + err.message;
+                        assistantBubble.appendChild(note);
                     }
                 }
             </script>

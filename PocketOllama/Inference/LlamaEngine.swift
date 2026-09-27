@@ -221,7 +221,7 @@ public actor LlamaEngine {
         if let m = model { llama_model_free(m); model = nil }
         vocab = nil
         loadedModelPath = ""
-        MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableDarwinBalloonPurge)
+        MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableAllocatorRelief)
     }
 
     /// What the library reports about offload, so the UI can state facts.

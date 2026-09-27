@@ -11,7 +11,7 @@ public final class AppDelegate: NSObject, UIApplicationDelegate {
         // 2. Initialize Hardware & Thermal Governors
         _ = HardwareAutoTuner.shared.detectProfile()
         _ = ThermalGovernor.shared
-        _ = MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableDarwinBalloonPurge)
+        _ = MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableAllocatorRelief)
 
         // NOTE: there is deliberately no AVAudioSession here. Activating a
         // .playback session with .duckOthers silenced the user's music every time
@@ -65,7 +65,7 @@ public final class AppDelegate: NSObject, UIApplicationDelegate {
 
     public func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
         print("[PocketOllama] Kernel memory pressure alert. Triggering RAM scavenger...")
-        MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableDarwinBalloonPurge)
+        MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableAllocatorRelief)
 
         // Purging caches does nothing while a multi-gigabyte model is still mapped,
         // so iOS would jetsam the app. Release it instead, unless a generation is
