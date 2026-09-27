@@ -55,10 +55,17 @@ jobs:
           test -n "$APP" || { echo "app bundle missing"; exit 1; }
           test -d "$APP/Frameworks/llama.framework" || { echo "llama.framework not embedded"; exit 1; }
           otool -L "$APP/PocketOllama" | grep -q "llama.framework/llama" || { echo "app does not link llama.framework"; exit 1; }
-          hits=$(strings -a "$APP/PocketOllama" | grep -c "llama_model_load_from_file" || true)
-          echo "app-level llama symbol hits: $hits"
-          test "$hits" -gt 0 || { echo "app binary does not reference the llama API"; exit 1; }
-          strings -a "$APP/Frameworks/llama.framework/llama" | grep -q "kernel_mul_mm" || { echo "Metal kernels missing from framework"; exit 1; }
+          # The app links llama dynamically, so the C symbols land in the undefined
+          # symbol table. nm/otool on the app is the authoritative check, not strings.
+          if nm -u "$APP/PocketOllama" | grep -q "llama_model_load_from_file"; then
+            echo "app imports llama_model_load_from_file (dynamically linked)"
+          elif nm -a "$APP/PocketOllama" 2>/dev/null | grep -q "llama_model_load_from_file"; then
+            echo "app references llama_model_load_from_file"
+          else
+            echo "app binary does not reference the llama API at all"; exit 1
+          fi
+          nm -gU "$APP/Frameworks/llama.framework/llama" | grep -q "_llama_model_load_from_file"             || { echo "llama.framework does not export llama_model_load_from_file"; exit 1; }
+          strings -a "$APP/Frameworks/llama.framework/llama" | grep -q "kernel_mul_mm"             || { echo "Metal kernels missing from framework"; exit 1; }
           echo "inference engine present"
 
       - name: Package IPA
