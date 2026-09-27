@@ -385,12 +385,13 @@ public actor LlamaEngine {
 
             // Decode straight into the reusable buffer. The previous form also
             // allocated a second array per token to convert CChar to UInt8.
-            let pieceBytes: ArraySlice<UInt8> = pieceBuf.withUnsafeMutableBytes { raw -> ArraySlice<UInt8> in
-                let base = raw.baseAddress!.assumingMemoryBound(to: CChar.self)
-                let len = llama_token_to_piece(vocab, id, base, Int32(raw.count), 0, false)
-                guard len > 0 else { return ArraySlice() }
-                return pieceBuf[0..<Int(len)]
+            // Only the length is taken from inside the exclusive-access closure;
+            // reading the slice there would be an overlapping access.
+            let pieceLen = pieceBuf.withUnsafeMutableBytes { raw -> Int in
+                guard let base = raw.baseAddress?.assumingMemoryBound(to: CChar.self) else { return 0 }
+                return Int(llama_token_to_piece(vocab, id, base, Int32(raw.count), 0, false))
             }
+            let pieceBytes = pieceLen > 0 ? pieceBuf[0..<pieceLen] : ArraySlice<UInt8>()
             // Byte-fallback BPE splits multi-byte characters across tokens, so the
             // tail of a piece may be an incomplete sequence. Hold it back until
             // the continuation token completes it.
