@@ -1,9 +1,9 @@
-name: Build & Release iOS IPA (PocketOllama)
+name: Build and Release iOS IPA (PocketOllama)
 
 on:
   push:
-    branches: [ "main", "master" ]
-    tags: [ "v*" ]
+    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -11,26 +11,35 @@ permissions:
 
 jobs:
   build-ipa:
-    name: Build Sideloadable iOS IPA
-    runs-on: macos-15 # Apple Silicon Runner with Xcode 16
-    
+    name: Build sideloadable iOS IPA
+    runs-on: macos-15
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
 
-      - name: Show Xcode Version
+      - name: Show Xcode
         run: xcodebuild -version
+
+      - name: Cache llama.xcframework
+        uses: actions/cache@v4
+        with:
+          path: Vendor/llama.xcframework
+          key: llama-xcframework-b11218
+
+      - name: Fetch llama.cpp XCFramework
+        run: chmod +x Scripts/fetch_llama.sh && ./Scripts/fetch_llama.sh
 
       - name: Install xcodegen
         run: brew install xcodegen
 
-      - name: Generate Xcode Project
+      - name: Generate Xcode project
         run: xcodegen generate
 
-      - name: Build Archive (Unsigned for Sideloading)
+      - name: Lint for stubs and fake code
+        run: chmod +x Scripts/verify_no_stubs.sh && ./Scripts/verify_no_stubs.sh
+
+      - name: Build (unsigned)
         run: |
           xcodebuild build \
             -project PocketOllama.xcodeproj \
@@ -38,43 +47,47 @@ jobs:
             -destination "generic/platform=iOS" \
             -configuration Release \
             -derivedDataPath build/DerivedData \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            GCC_PREPROCESSOR_DEFINITIONS="GGML_USE_METAL=1 SWIFT_PACKAGE=1" \
-            OTHER_SWIFT_FLAGS="-D GGML_USE_METAL"
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
 
-      - name: Package App into Sideloadable .IPA
+      - name: Verify the inference engine is actually linked
+        run: |
+          APP=$(find build/DerivedData -name "PocketOllama.app" -type d | head -n 1)
+          test -n "$APP" || { echo "app bundle missing"; exit 1; }
+          test -d "$APP/Frameworks/llama.framework" || { echo "llama.framework not embedded"; exit 1; }
+          otool -L "$APP/PocketOllama" | grep -q "llama.framework/llama" || { echo "app does not link llama.framework"; exit 1; }
+          hits=$(strings -a "$APP/PocketOllama" | grep -c "llama_model_load_from_file" || true)
+          echo "app-level llama symbol hits: $hits"
+          test "$hits" -gt 0 || { echo "app binary does not reference the llama API"; exit 1; }
+          strings -a "$APP/Frameworks/llama.framework/llama" | grep -q "kernel_mul_mm" || { echo "Metal kernels missing from framework"; exit 1; }
+          echo "inference engine present"
+
+      - name: Package IPA
         run: |
           mkdir -p build/Payload
-          APP_PATH=$(find build/DerivedData -name "PocketOllama.app" -type d | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            echo "Error: PocketOllama.app not found in DerivedData"
-            exit 1
-          fi
-          echo "Found app at: $APP_PATH"
-          cp -r "$APP_PATH" build/Payload/
-          cd build
-          zip -r -9 PocketOllama.ipa Payload
-          cd ..
+          APP=$(find build/DerivedData -name "PocketOllama.app" -type d | head -n 1)
+          cp -R "$APP" build/Payload/
+          cd build && zip -q -9 -r PocketOllama.ipa Payload && cd ..
           ls -lh build/PocketOllama.ipa
+          unzip -l build/PocketOllama.ipa | grep -E "Frameworks/llama.framework|PocketOllama$"
 
-      - name: Upload IPA as GitHub Actions Artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: PocketOllama-iOS-IPA
           path: build/PocketOllama.ipa
-          retention-days: 30
+          retention-days: 60
 
-      - name: Publish GitHub Release
+      - name: Read version
+        id: version
+        run: echo "value=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' PocketOllama/Resources/Info.plist)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v2.0.${{ github.run_number }}"
-          name: "PocketOllama iOS v2.0.${{ github.run_number }}"
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('v{0}-build{1}', steps.version.outputs.value, github.run_number) }}
+          name: PocketOllama iOS ${{ steps.version.outputs.value }} (build ${{ github.run_number }})
           files: build/PocketOllama.ipa
           draft: false
-          prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

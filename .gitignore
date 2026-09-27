@@ -8,3 +8,7 @@ build/
 *.xcuserstate
 .env
 *.token
+
+# XcodeGen
+Vendor/
+PocketOllama.xcodeproj/

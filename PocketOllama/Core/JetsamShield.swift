@@ -12,7 +12,8 @@ public struct MemoryBudgetResult: Sendable {
 public final class JetsamShield: @unchecked Sendable {
     public static let shared = JetsamShield()
 
-    private let safetyMarginBytes: UInt64 = 300 * 1024 * 1024 // 300MB buffer for iOS kernel
+    /// 350 MB held back for the iOS kernel, GPU working set, and fragmentation headroom.
+    private let safetyMarginBytes: UInt64 = 350 * 1024 * 1024
 
     private init() {}
 
@@ -23,28 +24,62 @@ public final class JetsamShield: @unchecked Sendable {
     ) -> MemoryBudgetResult {
         let availableRAM = MemoryScavenger.shared.purgeAndScavengeRAM()
 
-        // Real KV cache calculation per token:
-        // For ~3B model: 28 layers * 8 kv heads * 128 head dim * 0.5625 (Q4_0) * 2 (K+V) = ~32 KB per token
-        // For ~8B model: 32 layers * 8 kv heads * 128 head dim * 0.5625 (Q4_0) * 2 (K+V) = ~36 KB per token
-        let bytesPerToken: Double = (kvQuant.lowercased() == "q4_0") ? 36864.0 : 73728.0
+        // No model metadata is known at this point, so size the KV cache from the device profile
+        // and the requested context. GGUFHeaderParser refines this once the file is inspected.
+        let hw = HardwareAutoTuner.shared.detectProfile()
+        let bytesPerToken = Self.estimatedBytesPerToken(profile: hw, kvQuant: kvQuant)
         let kvCacheBytes = UInt64(Double(requestedContextTokens) * bytesPerToken)
 
         let totalRequired = modelFileSizeBytes + kvCacheBytes + safetyMarginBytes
-        let isSafe = availableRAM > (modelFileSizeBytes + safetyMarginBytes)
+        let isSafe = availableRAM > (modelFileSizeBytes + safetyMarginBytes) && availableRAM > totalRequired
 
-        let availableForKV = (availableRAM > (modelFileSizeBytes + safetyMarginBytes)) ? (availableRAM - modelFileSizeBytes - safetyMarginBytes) : 0
+        let availableForKV = availableRAM > (modelFileSizeBytes + safetyMarginBytes)
+            ? (availableRAM - modelFileSizeBytes - safetyMarginBytes)
+            : 0
         let maxSafeTokens = Int(Double(availableForKV) / bytesPerToken)
 
-        let errorMsg: String? = isSafe ? nil : "Insufficient memory: Model requires \(modelFileSizeBytes / (1024*1024))MB, but only \(availableRAM / (1024*1024))MB available."
+        let errorMsg: String? = isSafe ? nil :
+            "Insufficient memory: model needs \(modelFileSizeBytes / (1024 * 1024)) MB plus "
+            + "\(kvCacheBytes / (1024 * 1024)) MB for a \(requestedContextTokens)-token context, "
+            + "but only \(availableRAM / (1024 * 1024)) MB is available. "
+            + "Try a smaller model or a shorter context."
 
         return MemoryBudgetResult(
             isSafe: isSafe,
             availableRAMBytes: availableRAM,
             requiredRAMBytes: totalRequired,
-            safeMaxContextTokens: max(2048, (maxSafeTokens / 1024) * 1024),
+            safeMaxContextTokens: max(1024, (maxSafeTokens / 1024) * 1024),
             suggestedKVQuant: (availableRAM < 4 * 1024 * 1024 * 1024) ? "q4_0" : "q8_0",
             errorMessage: errorMsg
         )
+    }
+
+    /// bytesPerToken = 2 (K and V) * n_layers * n_kv_heads * head_dim * bytesPerElement
+    /// Derived from the device tier since model metadata is not yet available.
+    private static func estimatedBytesPerToken(profile: DeviceHardwareSpec, kvQuant: String) -> Double {
+        let bytesPerElement: Double
+        switch kvQuant.lowercased() {
+        case "q4_0", "q4_1": bytesPerElement = 0.5625
+        case "q8_0": bytesPerElement = 1.0625
+        default: bytesPerElement = 2.0
+        }
+
+        // Representative mid-size model shape for this device class.
+        let layers: Double
+        let nEmbd: Double
+        let nHeads: Double
+        let nKVHeads: Double
+
+        if profile.is8GBPlus {
+            (layers, nEmbd, nHeads, nKVHeads) = (32, 4096, 32, 8)
+        } else if profile.totalRAMGB >= 5.0 {
+            (layers, nEmbd, nHeads, nKVHeads) = (28, 3072, 24, 8)
+        } else {
+            (layers, nEmbd, nHeads, nKVHeads) = (24, 1536, 12, 2)
+        }
+
+        let headDim = nEmbd / max(1, nHeads)
+        return 2.0 * layers * nKVHeads * headDim * bytesPerElement
     }
 
     public func compactPromptMiddleOut(prompt: String, maxAllowedTokens: Int) -> (compactedPrompt: String, wasCompacted: Bool) {
@@ -53,16 +88,14 @@ public final class JetsamShield: @unchecked Sendable {
             return (prompt, false)
         }
 
-        let prefixLength = Int(Double(maxChars) * 0.25)
-        let suffixLength = Int(Double(maxChars) * 0.70)
+        let prefixLength = min(Int(Double(maxChars) * 0.25), prompt.count)
+        let suffixLength = min(Int(Double(maxChars) * 0.70), prompt.count)
+        guard prefixLength + suffixLength < prompt.count else {
+            return (String(prompt.suffix(maxChars)), true)
+        }
 
-        let prefixIndex = prompt.index(prompt.startIndex, offsetBy: min(prefixLength, prompt.count))
-        let suffixIndex = prompt.index(prompt.endIndex, offsetBy: -min(suffixLength, prompt.count))
-
-        let prefix = String(prompt[..<prefixIndex])
-        let suffix = String(prompt[suffixIndex...])
-
-        let compacted = "\(prefix)\n\n[... Context compacted by Middle-Out Shield ...]\n\n\(suffix)"
-        return (compacted, true)
+        let prefix = String(prompt.prefix(prefixLength))
+        let suffix = String(prompt.suffix(suffixLength))
+        return ("\(prefix)\n\n[... Context compacted by Middle-Out Shield ...]\n\n\(suffix)", true)
     }
 }
