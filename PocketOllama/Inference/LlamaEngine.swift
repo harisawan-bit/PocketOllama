@@ -163,7 +163,7 @@ public actor LlamaEngine {
                 defer { isGenerating = false }
 
                 do {
-                    try Self.generate(
+                    try generate(
                         prompt: prompt,
                         config: config,
                         ctx: ctx,
@@ -182,7 +182,7 @@ public actor LlamaEngine {
         }
     }
 
-    private static func generate(
+    private func generate(
         prompt: String,
         config: InferenceConfig,
         ctx: OpaquePointer,
@@ -191,7 +191,7 @@ public actor LlamaEngine {
         contextWindow: Int,
         into continuation: AsyncThrowingStream<TokenDelta, Error>.Continuation
     ) throws {
-        let formatted = formatPrompt(prompt, model: model)
+        let formatted = Self.formatPrompt(prompt, model: model)
         let byteCount = formatted.utf8.count
         guard byteCount > 0 else { throw LlamaEngineError.tokenizeFailed }
 
@@ -217,7 +217,7 @@ public actor LlamaEngine {
         while i < Int(n) {
             if Task.isCancelled { return }
             let chunk = min(256, Int(n) - i)
-            var batch = llama_batch_get_one(&tokens[i], Int32(chunk))
+            let batch = llama_batch_get_one(&tokens[i], Int32(chunk))
             if llama_decode(ctx, batch) != 0 { throw LlamaEngineError.decodeFailed }
             i += chunk
         }
@@ -252,14 +252,14 @@ public actor LlamaEngine {
                 : ""
 
             var next = id
-            var batch = llama_batch_get_one(&next, 1)
+            let batch = llama_batch_get_one(&next, 1)
             if llama_decode(ctx, batch) != 0 { throw LlamaEngineError.decodeFailed }
             produced += 1
 
             guard !piece.isEmpty else { continue }
 
             let combined = full + piece
-            if let stop = matchStop(combined, stopTokens: config.stopTokens) {
+            if let stop = Self.matchStop(combined, stopTokens: config.stopTokens) {
                 let trimmed = String(combined.dropLast(stop.count))
                 let finalSplit = ReasoningSplitter().replay(trimmed)
                 continuation.yield(TokenDelta(

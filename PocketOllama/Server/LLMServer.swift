@@ -274,7 +274,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         let start = Date()
         var completionText = ""
         var completionReasoning = ""
-        var promptTokens = 0
+        let promptTokens = 0
         var completionTokens = 0
         var toolCalls: [OpenAIToolCall] = []
 
@@ -317,7 +317,6 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             }
 
             let duration = max(0.001, Date().timeIntervalSince(start))
-            let tps = Double(completionTokens) / duration
             TelemetryManager.shared.recordTokensGenerated(count: completionTokens, durationSeconds: duration)
             RequestLogger.shared.log(method: "POST", path: path, statusCode: 200,
                                      tokensGenerated: completionTokens, durationSeconds: duration)

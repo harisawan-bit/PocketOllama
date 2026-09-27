@@ -36,6 +36,16 @@ public final class GGUFHeaderParser: @unchecked Sendable {
             return data.withUnsafeBytes { $0.loadUnaligned(as: T.self) }
         }
 
+        func readFloat() -> Float? {
+            guard let bits = read(UInt32.self) else { return nil }
+            return Float(bitPattern: bits)
+        }
+
+        func readDouble() -> Double? {
+            guard let bits = read(UInt64.self) else { return nil }
+            return Double(bitPattern: bits)
+        }
+
         guard let magic = read(UInt32.self) else { return fallbackMetadata(fileSize: fileSize) }
         let ggufMagic: UInt32 = 0x46554747   // "GGUF" little-endian
         guard magic == ggufMagic else { return fallbackMetadata(fileSize: fileSize) }
@@ -63,18 +73,19 @@ public final class GGUFHeaderParser: @unchecked Sendable {
                       let value = String(data: valData, encoding: .utf8) else { break }
                 if key == "general.architecture" { arch = value }
                 if key.hasSuffix(".context_length") { contextLength = Int(value) ?? 0 }
-            case 9, 10:  // UINT32, INT32
-                let v = (valueType == 9 ? read(UInt32.self).map { Int($0) } : read(Int32.self).map { Int($0) }) ?? 0
+            case 9:  // UINT32
+                let v = Int(read(UInt32.self) ?? 0)
                 if key.hasSuffix(".block_count") { layers = v }
                 if key.hasSuffix(".embedding_length") { embedDim = v }
                 if key.hasSuffix(".attention.head_count_kv") { kvHeads = v }
-            case 11, 12:  // UINT64, INT64
-                _ = valueType == 11 ? read(UInt64.self) : read(Int64.self)
-            case 13: _ = read(Float.self)
-            case 14: _ = read(Double.self)
-            case 15:  // ARRAY: skip by scanning, bail if we cannot
+            case 10: _ = read(Int32.self)
+            case 11: _ = read(UInt64.self)
+            case 12: _ = read(Int64.self)
+            case 13: _ = readFloat()
+            case 14: _ = readDouble()
+            case 15:  // ARRAY
                 guard let arrType = read(UInt32.self), let arrLen = read(UInt64.self) else { break }
-                skipArray(handle: handle, elementType: arrType, count: arrLen, reader: read)
+                skipArray(handle: handle, elementType: arrType, count: arrLen)
             default:
                 break
             }
@@ -99,12 +110,7 @@ public final class GGUFHeaderParser: @unchecked Sendable {
         )
     }
 
-    private func skipArray<T: FixedWidthInteger>(
-        handle: FileHandle,
-        elementType: UInt32,
-        count: UInt64,
-        reader: (T.Type) -> T?
-    ) {
+    private func skipArray(handle: FileHandle, elementType: UInt32, count: UInt64) {
         let stride: Int
         switch elementType {
         case 8: return            // string array, cannot cheaply skip
