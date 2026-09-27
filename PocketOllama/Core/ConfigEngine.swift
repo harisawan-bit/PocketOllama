@@ -40,7 +40,6 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
     // Memory Controls
     @Published public var enableMemoryLock: Bool = true
     @Published public var enableDarwinBalloonPurge: Bool = true
-    @Published public var enableContiguousMetalHeap: Bool = true
 
     // Server Controls
     @Published public var serverPort: UInt16 = 11434
@@ -54,6 +53,7 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
     @Published public private(set) var estimatedKVRAMMB: Double = 0.0
 
     private var cancellables = Set<AnyCancellable>()
+    private var lastKnownMetadata: GGUFMetadata?
 
     private init() {
         let hw = HardwareAutoTuner.shared.detectProfile()
@@ -93,17 +93,19 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
                 self.recommendedContextTokens = min(maxSafe, 8192)
             }
 
+            self.lastKnownMetadata = metadata
             self.contextWindowTokens = self.recommendedContextTokens
             self.recalculateKVMemory(context: self.contextWindowTokens, kvQuant: self.kvQuantization, meta: metadata)
         }
     }
 
     /// Updates dynamic recommendations from a loaded llama_model (authoritative metadata)
-    public func updateForLoadedModel(model: OpaquePointer) {
+    public func updateForLoadedModel(model: OpaquePointer, modelFileSize: UInt64, loadedContext: Int) {
         let nCtxTrain = Int(llama_model_n_ctx_train(model))
         let nLayers = Int(llama_model_n_layer(model))
         let nEmbd = Int(llama_model_n_embd(model))
         let nHeadKV = Int(llama_model_n_head_kv(model))
+        let nHead = Int(llama_model_n_head(model))
 
         var buf = [CChar](repeating: 0, count: 256)
         llama_model_desc(model, &buf, 256)
@@ -115,7 +117,8 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
             layerCount: nLayers,
             embeddingLength: nEmbd,
             headCountKV: nHeadKV,
-            fileSizeBytes: 0,
+            headCount: nHead,
+            fileSizeBytes: modelFileSize,
             estimatedParamCountBillion: 12.0 * Double(nEmbd) * Double(nEmbd) * Double(nLayers) / 1_000_000_000.0
         )
 
@@ -138,8 +141,11 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
             } else {
                 self.recommendedContextTokens = min(maxSafe, 8192)
             }
-            self.contextWindowTokens = self.recommendedContextTokens
-            self.recalculateKVMemory(context: self.contextWindowTokens, kvQuant: self.kvQuantization, meta: meta)
+            // Do not clobber the live context: it was already fixed by
+            // llama_init_from_model. Report what is actually loaded.
+            self.lastKnownMetadata = meta
+            self.contextWindowTokens = loadedContext
+            self.recalculateKVMemory(context: loadedContext, kvQuant: self.kvQuantization, meta: meta)
         }
     }
 
@@ -182,8 +188,11 @@ public final class ConfigEngine: ObservableObject, @unchecked Sendable {
     }
 
     private func recalculateKVMemory(context: Int, kvQuant: String, meta: GGUFMetadata? = nil) {
-        let m = meta ?? GGUFHeaderParser.shared.inspectGGUF(at: "")
+        // With nothing known, keep the last figure rather than reading a phantom
+        // path and publishing fallback numbers as if they were measurements.
+        guard let m = meta ?? lastKnownMetadata else { return }
         let bytes = GGUFHeaderParser.shared.calculateKVCacheBytes(metadata: m, contextTokens: context, kvQuant: kvQuant)
-        self.estimatedKVRAMMB = Double(bytes) / (1024.0 * 1024.0)
+        let mb = Double(bytes) / (1024.0 * 1024.0)
+        DispatchQueue.main.async { self.estimatedKVRAMMB = mb }
     }
 }

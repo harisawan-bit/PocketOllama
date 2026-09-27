@@ -93,14 +93,17 @@ public actor LlamaEngine {
         let fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? UInt64) ?? 0
         let ctxTokens = targetContext ?? ConfigEngine.shared.contextWindowTokens
 
+        // Advisory only. The model shape is unknown here, so this is sized from the
+        // device tier and was rejecting small models at large contexts that fit
+        // fine. The authoritative check runs after the model is loaded, using the
+        // real dimensions, before any context memory is committed.
         let budget = JetsamShield.shared.validateMemoryBudget(
             modelFileSizeBytes: fileSize,
             requestedContextTokens: ctxTokens,
             kvQuant: ConfigEngine.shared.kvQuantization
         )
-        guard budget.isSafe else {
-            throw NSError(domain: "PocketOllama", code: 413,
-                          userInfo: [NSLocalizedDescriptionKey: budget.errorMessage ?? "Memory budget exceeded"])
+        if !budget.isSafe {
+            print("[PocketOllama] Pre-load memory estimate is pessimistic: \(budget.errorMessage ?? "")")
         }
 
         var mparams = llama_model_default_params()
@@ -118,10 +121,37 @@ public actor LlamaEngine {
             throw LlamaEngineError.loadFailed((path as NSString).lastPathComponent)
         }
 
+        // Exact memory check now that the real dimensions are known. The pre-load
+        // check has to guess the model shape, which rejected small models at large
+        // contexts that actually fitted comfortably.
+        let exactKV = GGUFHeaderParser.shared.calculateKVCacheBytes(
+            metadata: GGUFMetadata(
+                architecture: "", contextLengthTrained: 0,
+                layerCount: Int(llama_model_n_layer(m)),
+                embeddingLength: Int(llama_model_n_embd(m)),
+                headCountKV: Int(llama_model_n_head_kv(m)),
+                headCount: Int(llama_model_n_head(m)),
+                fileSizeBytes: fileSize, estimatedParamCountBillion: 0
+            ),
+            contextTokens: ctxTokens,
+            kvQuant: ConfigEngine.shared.kvQuantization
+        )
+        let availableNow = MemoryScavenger.shared.getAvailableMemoryBytes()
+        if availableNow < exactKV + JetsamShield.shared.safetyMarginBytes {
+            llama_model_free(m)
+            throw NSError(domain: "PocketOllama", code: 413, userInfo: [NSLocalizedDescriptionKey:
+                "Not enough free memory for a \(ctxTokens)-token context at this KV quantisation: "
+                + "needs \(exactKV / (1024 * 1024)) MB for the cache plus "
+                + "\(JetsamShield.shared.safetyMarginBytes / (1024 * 1024)) MB headroom, "
+                + "but only \(availableNow / (1024 * 1024)) MB is free. Reduce the context or use a smaller model."])
+        }
+
         var cparams = llama_context_default_params()
         cparams.n_ctx = UInt32(ctxTokens)
-        cparams.n_batch = 512
-        cparams.n_ubatch = 256
+        // Prefill batch was displayed in Engine Configuration but never applied.
+        let batch = max(32, ConfigEngine.shared.prefillBatchSize)
+        cparams.n_batch = UInt32(batch)
+        cparams.n_ubatch = UInt32(min(batch, 512))
         cparams.n_threads = Int32(ConfigEngine.shared.threadCount)
         cparams.n_threads_batch = Int32(ConfigEngine.shared.threadCount)
 
@@ -142,7 +172,7 @@ public actor LlamaEngine {
         loadedModelPath = path
         activeContextSize = ctxTokens
 
-        ConfigEngine.shared.updateForLoadedModel(model: m)
+        ConfigEngine.shared.updateForLoadedModel(model: m, modelFileSize: fileSize, loadedContext: ctxTokens)
     }
 
     public func unloadModel() async {
@@ -237,8 +267,12 @@ public actor LlamaEngine {
         let reserve = min(config.maxTokens, 1024)
         let promptBudget = max(1, contextWindow - reserve)
         if Int(n) > promptBudget {
-            tokens = Array(tokens.suffix(promptBudget))
-            n = Int32(promptBudget)
+            // Dropping the leading tokens would delete the system prompt and the
+            // start of the conversation, so drop from the middle instead and keep
+            // the instructions at the head and the question at the tail.
+            let trimmed = JetsamShield.shared.compactTokenWindow(tokens, limit: promptBudget)
+            tokens = trimmed
+            n = Int32(trimmed.count)
         }
 
         llama_memory_clear(llama_get_memory(ctx), true)
@@ -266,6 +300,7 @@ public actor LlamaEngine {
         var produced = 0
         var full = ""
         var splitter = ReasoningSplitter()
+        var utf8Buffer = PartialUTF8Decoder()
 
         while produced < config.maxTokens {
             if Task.isCancelled { return }
@@ -278,9 +313,14 @@ public actor LlamaEngine {
 
             var pieceBuf = [CChar](repeating: 0, count: 64)
             let pieceLen = llama_token_to_piece(vocab, id, &pieceBuf, Int32(pieceBuf.count), 0, false)
-            let piece = pieceLen > 0
-                ? String(decoding: pieceBuf.prefix(Int(pieceLen)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
-                : ""
+            let pieceBytes = pieceLen > 0
+                ? pieceBuf.prefix(Int(pieceLen)).map { UInt8(bitPattern: $0) }
+                : []
+            // Byte-fallback BPE splits multi-byte characters across tokens, so the
+            // tail of a piece may be an incomplete sequence. Hold it back until
+            // the continuation token completes it.
+            utf8Buffer.append(contentsOf: pieceBytes)
+            let piece = utf8Buffer.drainDecodable()
 
             var next = id
             let batch = llama_batch_get_one(&next, 1)
@@ -293,6 +333,7 @@ public actor LlamaEngine {
             if let stop = Self.matchStop(combined, stopTokens: config.stopTokens) {
                 let trimmed = String(combined.dropLast(stop.count))
                 let finalSplit = ReasoningSplitter().replay(trimmed)
+                lastCompletionTokens = produced
                 continuation.yield(TokenDelta(
                     text: finalSplit.text,
                     reasoningText: finalSplit.reasoning,
@@ -480,5 +521,45 @@ struct ReasoningSplitter {
             }
         }
         return best
+    }
+}
+
+/// Accumulates token bytes and emits only complete UTF-8 sequences.
+/// A token boundary can fall inside a multi-byte character; decoding each token
+/// alone yields U+FFFD for any non-ASCII output.
+struct PartialUTF8Decoder {
+    private var pending: [UInt8] = []
+
+    mutating func append<S: Sequence>(contentsOf bytes: S) where S.Element == UInt8 {
+        pending.append(contentsOf: bytes)
+    }
+
+    /// Emits every complete sequence and retains a trailing partial one.
+    mutating func drainDecodable() -> String {
+        var out = ""
+        var i = 0
+        while i < pending.count {
+            let b = pending[i]
+            let width: Int
+            var valid = true
+            switch b {
+            case 0x00...0x7F: width = 1
+            case 0xC2...0xDF: width = 2
+            case 0xE0...0xEF: width = 3
+            case 0xF0...0xF4: width = 4
+            default: width = 1; valid = false      // stray continuation/lead byte
+            }
+
+            if !valid {
+                out.append(Character(UnicodeScalar(b)))
+                i += 1
+                continue
+            }
+            if i + width > pending.count { break }  // incomplete, wait for more
+            out.append(contentsOf: String(decoding: pending[i..<(i + width)], as: UTF8.self))
+            i += width
+        }
+        pending.removeFirst(i)
+        return out
     }
 }

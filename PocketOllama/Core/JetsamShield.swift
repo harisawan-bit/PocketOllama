@@ -1,4 +1,5 @@
 import Foundation
+import llama
 
 public struct MemoryBudgetResult: Sendable {
     public let isSafe: Bool
@@ -13,7 +14,7 @@ public final class JetsamShield: @unchecked Sendable {
     public static let shared = JetsamShield()
 
     /// 350 MB held back for the iOS kernel, GPU working set, and fragmentation headroom.
-    private let safetyMarginBytes: UInt64 = 350 * 1024 * 1024
+    let safetyMarginBytes: UInt64 = 350 * 1024 * 1024
 
     private init() {}
 
@@ -99,3 +100,16 @@ public final class JetsamShield: @unchecked Sendable {
         return ("\(prefix)\n\n[... Context compacted by Middle-Out Shield ...]\n\n\(suffix)", true)
     }
 }
+
+    /// Trims an over-long prompt by dropping tokens from the middle, keeping the
+    /// head (system instructions) and the tail (the user's actual question).
+    /// Truncating from the front instead silently deleted the system prompt and
+    /// the opening turns, which made the model answer the wrong thing.
+    public func compactTokenWindow(_ tokens: [llama_token], limit: Int) -> [llama_token] {
+        guard tokens.count > limit, limit > 0 else { return tokens }
+        let headCount = max(1, limit / 4)
+        let tailCount = max(1, limit - headCount - 1)
+        return Array(tokens.prefix(headCount))
+            + [llama_token(0)]
+            + Array(tokens.suffix(tailCount))
+    }

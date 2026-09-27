@@ -53,7 +53,6 @@ public final class BenchmarkEngine: ObservableObject, @unchecked Sendable {
 
         let start = Date()
         var firstToken: Date?
-        var produced = 0
 
         let stream = await LlamaEngine.shared.streamInference(prompt: "user\n\(prompt)", config: config)
 
@@ -62,7 +61,6 @@ public final class BenchmarkEngine: ObservableObject, @unchecked Sendable {
                 if firstToken == nil, !delta.text.isEmpty || delta.reasoningText != nil {
                     firstToken = Date()
                 }
-                if !delta.text.isEmpty || delta.reasoningText != nil { produced += 1 }
                 if delta.isFinished { break }
             }
         } catch {
@@ -78,6 +76,9 @@ public final class BenchmarkEngine: ObservableObject, @unchecked Sendable {
             return failed
         }
 
+        // Count real tokens, not stream deltas: the reasoning splitter can buffer
+        // and merge pieces, so one delta is not reliably one token.
+        let produced = await LlamaEngine.shared.lastUsage.completion
         let end = Date()
         let ttftMs = firstToken.map { $0.timeIntervalSince(start) * 1000.0 } ?? 0
         let genDuration = firstToken.map { max(0.001, end.timeIntervalSince($0)) } ?? 0

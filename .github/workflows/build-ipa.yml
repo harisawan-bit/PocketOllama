@@ -39,6 +39,9 @@ jobs:
       - name: Lint for stubs and fake code
         run: chmod +x Scripts/verify_no_stubs.sh && ./Scripts/verify_no_stubs.sh
 
+      - name: Self-check the non-obvious inference logic
+        run: swift Scripts/LogicSelfCheck.swift
+
       - name: Build (unsigned)
         run: |
           xcodebuild build \

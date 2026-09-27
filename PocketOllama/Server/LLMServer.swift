@@ -168,7 +168,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         }
 
         var authorization: String?
-        for line in parts.dropFirst() {
+        for line in lines.dropFirst() {
             let lower = line.lowercased()
             if lower.hasPrefix("authorization:") {
                 authorization = String(line.dropFirst("authorization:".count))
@@ -268,7 +268,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             let size = (try? fm.attributesOfItem(atPath: dir.appendingPathComponent(file).path)[.size] as? Int64) ?? 0
             let id = (file as NSString).deletingPathExtension
             let entry = """
-            {"id":"\(id.jsonSafe)","object":"model","created":1700000000,"owned_by":"pocketollama",
+            {"id":"\(id.jsonSafe)","object":"model","created":\(Self.nowEpoch),"owned_by":"pocketollama",
              "name":"\(id.jsonSafe)","model":"\(id.jsonSafe)",
              "modified_at":"2026-01-01T00:00:00Z","size":\(size)}
             """
@@ -277,7 +277,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
 
         if entries.isEmpty {
             let entry = """
-            {"id":"\(name.jsonSafe)","object":"model","created":1700000000,"owned_by":"pocketollama",
+            {"id":"\(name.jsonSafe)","object":"model","created":\(Self.nowEpoch),"owned_by":"pocketollama",
              "name":"\(name.jsonSafe)","model":"\(name.jsonSafe)",
              "modified_at":"2026-01-01T00:00:00Z","size":0}
             """
@@ -322,31 +322,25 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         let isOllama = path.hasPrefix("/api")
 
         var config = InferenceConfig(engine: ConfigEngine.shared)
-        config.maxTokens = min(maxTokens, 4096)
+        config.maxTokens = max(1, min(maxTokens, 4096))
 
         let stream = await LlamaEngine.shared.streamInference(prompt: prompt, config: config)
         let start = Date()
         var completionText = ""
         var completionReasoning = ""
         var promptTokens = 0
-        var completionTokens = 0
         var toolCalls: [OpenAIToolCall] = []
 
         if isStreaming {
-            let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
+            let headers = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\n\r\n"
             if let connection {
                 connection.send(content: headers.data(using: .utf8), completion: .idempotent)
             }
 
             do {
                 for try await delta in stream {
-                    completionTokens += 1
                     completionText += delta.text
                     completionReasoning += delta.reasoningText ?? ""
-
-                    if path == "/v1/chat/completions" {
-                        toolCalls = HermesToolBridge.shared.parseStreamingChunk(accumulatedText: completionText + (delta.reasoningText ?? "")).toolCalls
-                    }
 
                     let chunk: String
                     if isOllama {
@@ -357,7 +351,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                             fields.append("\"reasoning_content\":\"\(reasoning.jsonSafe)\"")
                         }
                         let finish = delta.isFinished ? "\"stop\"" : "null"
-                        chunk = "data: {\"id\":\"\(id)\",\"object\":\"chat.completion.chunk\",\"created\":1700000000,\"model\":\"\(model.jsonSafe)\",\"choices\":[{\"index\":0,\"delta\":{\(fields.joined(separator: ","))},\"finish_reason\":\(finish)}]}\n\n"
+                        chunk = "data: {\"id\":\"\(id)\",\"object\":\"chat.completion.chunk\",\"created\":\(Self.nowEpoch),\"model\":\"\(model.jsonSafe)\",\"choices\":[{\"index\":0,\"delta\":{\(fields.joined(separator: ","))},\"finish_reason\":\(finish)}]}\n\n"
                     }
                     if let connection {
                         connection.send(content: chunk.data(using: .utf8), completion: .idempotent)
@@ -365,9 +359,19 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                     if delta.isFinished { break }
                 }
             } catch {
-                if let connection { connection.cancel() }
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                if let connection {
+                    let errChunk = "data: {\"error\":{\"message\":\"\(message.jsonSafe)\",\"type\":\"server_error\"}}\n\n"
+                    connection.send(content: errChunk.data(using: .utf8), completion: .idempotent)
+                    connection.send(content: "data: [DONE]\r\n\r\n".data(using: .utf8),
+                                    completion: .contentProcessed { _ in connection.cancel() })
+                }
                 RequestLogger.shared.log(method: "POST", path: path, statusCode: 500)
                 return
+            }
+
+            if path == "/v1/chat/completions" {
+                toolCalls = HermesToolBridge.shared.parseStreamingChunk(accumulatedText: completionText).toolCalls
             }
 
             let usage = await LlamaEngine.shared.lastUsage
@@ -378,6 +382,13 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                                      tokensGenerated: usage.completion, durationSeconds: duration)
 
             if path == "/v1/chat/completions" {
+                if !toolCalls.isEmpty, let connection {
+                    let tItems = toolCalls.map { c in
+                        "{\"index\":0,\"id\":\"\(c.id)\",\"type\":\"function\",\"function\":{\"name\":\"\(c.function.name.jsonSafe)\",\"arguments\":\"\(c.function.arguments.jsonSafe)\"}}"
+                    }.joined(separator: ",")
+                    let finalChunk = "data: {\"id\":\"\(id)\",\"object\":\"chat.completion.chunk\",\"created\":\(Self.nowEpoch),\"model\":\"\(model.jsonSafe)\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[\(tItems)]},\"finish_reason\":\"tool_calls\"}]}\n\n"
+                    connection.send(content: finalChunk.data(using: .utf8), completion: .idempotent)
+                }
                 if let connection {
                     connection.send(content: "data: [DONE]\r\n\r\n".data(using: .utf8), completion: .contentProcessed { _ in
                         connection.cancel()
@@ -389,7 +400,6 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         } else {
             do {
                 for try await delta in stream {
-                    completionTokens += 1
                     completionText += delta.text
                     completionReasoning += delta.reasoningText ?? ""
                     if delta.isFinished { break }
@@ -417,7 +427,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                 let toolBlock = toolCalls.isEmpty ? "" : toolCallsJSON(toolCalls)
                 let finish = toolCalls.isEmpty ? "stop" : "tool_calls"
                 body = """
-                {"id":"\(id)","object":"chat.completion","created":1700000000,"model":"\(model.jsonSafe)",
+                {"id":"\(id)","object":"chat.completion","created":\(Self.nowEpoch),"model":"\(model.jsonSafe)",
                  "choices":[{"index":0,"message":{"role":"assistant","content":"\(completionText.jsonSafe)"\(toolBlock)},"finish_reason":"\(finish)"}],
                  "usage":{"prompt_tokens":\(promptTokens),"completion_tokens":\(usage.completion),"total_tokens":\(promptTokens + usage.completion)}}
                 """
@@ -461,6 +471,12 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         return blocks.joined(separator: "\n\n")
     }
 
+    /// Real epoch seconds; the old hardcoded \(Self.nowEpoch) was fabricated metadata.
+    private static var nowEpoch: Int { Int(Date().timeIntervalSince1970) }
+
+    /// Real epoch seconds; the old hardcoded value was fabricated metadata.
+    private static var nowEpoch: Int { Int(Date().timeIntervalSince1970) }
+
     private var corsHeaders: String {
         "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\n"
     }
@@ -479,22 +495,35 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         })
     }
 
+    /// Returns the Wi-Fi IPv4 address, falling back to any other active interface.
+    /// en0 is Wi-Fi on iOS; the previous version returned whichever interface happened
+    /// to be enumerated last, which could be a VPN or Ethernet tunnel, and it
+    /// dereferenced ifa_addr without a nil check.
     private func getWiFiAddress() -> String? {
-        var address: String?
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return nil }
-        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+        defer { freeifaddrs(ifaddr) }
+
+        func ipv4(_ ptr: UnsafeMutablePointer<ifaddrs>) -> String? {
             let flags = Int32(ptr.pointee.ifa_flags)
-            let addr = ptr.pointee.ifa_addr.pointee
-            if (flags & (IFF_UP | IFF_RUNNING | IFF_LOOPBACK)) == (IFF_UP | IFF_RUNNING), addr.sa_family == UInt8(AF_INET) {
-                var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-                if getnameinfo(ptr.pointee.ifa_addr, socklen_t(addr.sa_len), &hostname, socklen_t(hostname.count), nil, socklen_t(0), NI_NUMERICHOST) == 0 {
-                    address = String(cString: hostname)
-                }
-            }
+            guard (flags & (IFF_UP | IFF_RUNNING | IFF_LOOPBACK)) == (IFF_UP | IFF_RUNNING),
+                  let sa = ptr.pointee.ifa_addr,
+                  sa.pointee.sa_family == UInt8(AF_INET) else { return nil }
+            var buf = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            guard getnameinfo(sa, socklen_t(sa.pointee.sa_len), &buf, socklen_t(buf.count),
+                              nil, socklen_t(0), NI_NUMERICHOST) == 0 else { return nil }
+            let ip = String(cString: buf)
+            return ip.isEmpty ? nil : ip
         }
-        freeifaddrs(ifaddr)
-        return address
+
+        var fallback: String?
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let name = String(cString: ptr.pointee.ifa_name)
+            guard let ip = ipv4(ptr) else { continue }
+            if name == "en0" { return ip }
+            if fallback == nil { fallback = ip }
+        }
+        return fallback
     }
 }
 
