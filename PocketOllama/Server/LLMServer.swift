@@ -471,11 +471,10 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         return blocks.joined(separator: "\n\n")
     }
 
-    /// Real epoch seconds; the old hardcoded \(Self.nowEpoch) was fabricated metadata.
+    /// Real epoch seconds. The old hardcoded constant was fabricated metadata.
     private static var nowEpoch: Int { Int(Date().timeIntervalSince1970) }
 
     /// Real epoch seconds; the old hardcoded value was fabricated metadata.
-    private static var nowEpoch: Int { Int(Date().timeIntervalSince1970) }
 
     private var corsHeaders: String {
         "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: Content-Type, Authorization\r\nAccess-Control-Allow-Methods: POST, GET, OPTIONS\r\n"

@@ -99,8 +99,6 @@ public final class JetsamShield: @unchecked Sendable {
         let suffix = String(prompt.suffix(suffixLength))
         return ("\(prefix)\n\n[... Context compacted by Middle-Out Shield ...]\n\n\(suffix)", true)
     }
-}
-
     /// Trims an over-long prompt by dropping tokens from the middle, keeping the
     /// head (system instructions) and the tail (the user's actual question).
     /// Truncating from the front instead silently deleted the system prompt and
@@ -113,3 +111,4 @@ public final class JetsamShield: @unchecked Sendable {
             + [llama_token(0)]
             + Array(tokens.suffix(tailCount))
     }
+}
