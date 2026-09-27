@@ -80,6 +80,10 @@ public actor LlamaEngine {
 
     /// Stops the current generation at the next token boundary.
     public func cancelGeneration() {
+        markCancelled()
+    }
+
+    private func markCancelled() {
         cancelRequested = true
     }
     public var contextSize: Int { activeContextSize }
@@ -250,7 +254,7 @@ public actor LlamaEngine {
             // has to be hopped onto.
             continuation.onTermination = { _ in
                 task.cancel()
-                Task { [weak self] in self?.cancelRequested = true }
+                Task { [weak self] in await self?.markCancelled() }
             }
         }
     }

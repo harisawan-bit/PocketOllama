@@ -41,7 +41,7 @@ public final class AppDelegate: NSObject, UIApplicationDelegate {
         // Qwen 0.5B on the next launch.
         let lastUsed = UserDefaults.standard.string(forKey: "poLastLoadedModel")
         let match = lastUsed.flatMap { wanted in files.first { $0 == wanted } }
-        let name = match ?? files.first
+        guard let name = match ?? files.first else { return }
         let path = dir.appendingPathComponent(name).path
         do {
             try await LlamaEngine.shared.loadModel(path: path)
