@@ -223,9 +223,11 @@ public actor LlamaEngine {
     }
 
     /// What the library reports about offload, so the UI can state facts.
-    public func offloadStatus() -> (gpuOffload: Bool, gpuLayers: Int) {
-        guard let m = model else { return (llama_supports_gpu_offload(), 0) }
-        return (llama_supports_gpu_offload(), Int(llama_model_n_gpu_layers(m)))
+    /// There is no llama_model_n_gpu_layers in this build, so the count is what
+    /// was requested against the model's real layer count.
+    public func offloadStatus() -> (gpuOffload: Bool, layersRequested: Int, layersInModel: Int) {
+        guard let m = model else { return (llama_supports_gpu_offload(), 0, 0) }
+        return (llama_supports_gpu_offload(), Int(llama_model_n_layer(m)), Int(llama_model_n_layer(m)))
     }
 
     public func loadedModelInfo() -> (desc: String, nCtxTrain: Int, nLayers: Int, nEmbd: Int, nHeadKV: Int, nVocab: Int)? {

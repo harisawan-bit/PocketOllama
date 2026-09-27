@@ -31,10 +31,23 @@ public final class HardwareAutoTuner: @unchecked Sendable {
     }
 
     public static func detectCoreCounts() -> CoreCounts {
-        let info = ProcessInfo.processInfo
-        let perf = info.performanceCoreCount
-        let eff = info.efficiencyCoreCount
-        return CoreCounts(performance: max(1, perf), efficiency: max(0, eff), total: max(1, info.activeProcessorCount))
+        // ProcessInfo.performanceCoreCount is not exposed on iOS, so read the
+        // Darwin perf levels directly: hw.perflevel0 is the performance cluster
+        // and hw.perflevel1 the efficiency cluster on every Apple Silicon phone.
+        let perf = sysctlInt("hw.perflevel0.logicalcpu") ?? sysctlInt("hw.perflevel0.physicalcpu")
+        let eff = sysctlInt("hw.perflevel1.logicalcpu") ?? sysctlInt("hw.perflevel1.physicalcpu")
+        let total = ProcessInfo.processInfo.activeProcessorCount
+        let p = perf ?? total
+        return CoreCounts(performance: max(1, p),
+                          efficiency: max(0, eff ?? max(0, total - p)),
+                          total: max(1, total))
+    }
+
+    private static func sysctlInt(_ name: String) -> Int? {
+        var value: Int = 0
+        var size = MemoryLayout<Int>.size
+        guard sysctlbyname(name, &value, &size, nil, 0) == 0, value > 0 else { return nil }
+        return value
     }
 
     /// Wraps the lookup table so the thread count reflects the real performance
