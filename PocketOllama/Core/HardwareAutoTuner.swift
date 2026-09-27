@@ -11,7 +11,10 @@ public struct DeviceHardwareSpec: Sendable, Codable {
     public let totalRAMGB: Double
     public let maxSafeRAMLimitBytes: UInt64
     public let recommendedModelTier: String
-    public let optimalThreadCount: Int
+    /// Always derived from the real performance cores by detectProfile. The
+    /// lookup table omits it; the default only keeps the memberwise init valid
+    /// for those call sites and is never the value that ships.
+    public let optimalThreadCount: Int = 2
     public let maxSafeContextTokens: Int
     public let defaultKVQuant: String
     public let supportsSpeculative: Bool
@@ -97,7 +100,6 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 totalRAMGB: totalRAMGB,
                 maxSafeRAMLimitBytes: UInt64(6.4 * 1024 * 1024 * 1024),
                 recommendedModelTier: "Hermes 3 8B (Q4_K_M) / DeepSeek-R1-7B / Qwen 2.5 7B",
-                optimalThreadCount: 2, // 2 Performance Cores (Zero E-Core heat pollution)
                 maxSafeContextTokens: 32768,
                 defaultKVQuant: "q4_0",
                 supportsSpeculative: true,
@@ -115,7 +117,6 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 totalRAMGB: totalRAMGB,
                 maxSafeRAMLimitBytes: UInt64(6.5 * 1024 * 1024 * 1024),
                 recommendedModelTier: "Hermes 3 8B (Q4_K_M) / DeepSeek-R1-7B",
-                optimalThreadCount: 2,
                 maxSafeContextTokens: 32768,
                 defaultKVQuant: "q4_0",
                 supportsSpeculative: true,
@@ -133,7 +134,6 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 totalRAMGB: totalRAMGB,
                 maxSafeRAMLimitBytes: UInt64(6.2 * 1024 * 1024 * 1024),
                 recommendedModelTier: "Hermes 3 8B (Q4_K_M) / Llama 3.2 3B",
-                optimalThreadCount: 2,
                 maxSafeContextTokens: 16384,
                 defaultKVQuant: "q4_0",
                 supportsSpeculative: true,
@@ -151,7 +151,6 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 totalRAMGB: totalRAMGB,
                 maxSafeRAMLimitBytes: UInt64(4.2 * 1024 * 1024 * 1024),
                 recommendedModelTier: "Hermes 3 3B / Llama 3.2 3B",
-                optimalThreadCount: 2,
                 maxSafeContextTokens: 8192,
                 defaultKVQuant: "q8_0",
                 supportsSpeculative: false,
@@ -169,7 +168,6 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 totalRAMGB: totalRAMGB,
                 maxSafeRAMLimitBytes: UInt64(4.2 * 1024 * 1024 * 1024),
                 recommendedModelTier: "Hermes 3 3B / Qwen 2.5 3B",
-                optimalThreadCount: 2,
                 maxSafeContextTokens: 8192,
                 defaultKVQuant: "q8_0",
                 supportsSpeculative: false,
@@ -188,8 +186,7 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                     totalRAMGB: totalRAMGB,
                     maxSafeRAMLimitBytes: UInt64(6.4 * 1024 * 1024 * 1024),
                     recommendedModelTier: "Hermes 3 8B / DeepSeek-R1",
-                    optimalThreadCount: 2,
-                    maxSafeContextTokens: 32768,
+                        maxSafeContextTokens: 32768,
                     defaultKVQuant: "q4_0",
                     supportsSpeculative: true,
                     is8GBPlus: true
@@ -205,8 +202,7 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                     totalRAMGB: totalRAMGB,
                     maxSafeRAMLimitBytes: UInt64(4.0 * 1024 * 1024 * 1024),
                     recommendedModelTier: "Hermes 3 3B / Llama 3.2 3B",
-                    optimalThreadCount: 2,
-                    maxSafeContextTokens: 8192,
+                        maxSafeContextTokens: 8192,
                     defaultKVQuant: "q8_0",
                     supportsSpeculative: false,
                     is8GBPlus: false
