@@ -406,7 +406,7 @@ public actor LlamaEngine {
             guard !piece.isEmpty else { continue }
 
             full += piece
-            if let stop = Self.matchStop(full, stopTokens: config.stopTokens) {
+            if let stop = StopMatching.match(full, stopTokens: config.stopTokens) {
                 let trimmed = String(full.dropLast(stop.count))
                 let finalSplit = ReasoningSplitter().replay(trimmed)
                 lastCompletionTokens = produced
@@ -441,12 +441,7 @@ public actor LlamaEngine {
         ))
     }
 
-    private static func matchStop(_ text: String, stopTokens: [String]) -> String? {
-        for token in stopTokens where !token.isEmpty && text.hasSuffix(token) {
-            return token
-        }
-        return nil
-    }
+    
 
     private static func formatPrompt(_ prompt: String, model: OpaquePointer) -> String {
         let template = llama_model_chat_template(model, nil).map { String(cString: $0) } ?? "chatml"

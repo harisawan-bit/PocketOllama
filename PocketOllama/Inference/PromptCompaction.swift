@@ -58,3 +58,20 @@ public struct PartialUTF8Decoder {
         return out
     }
 }
+
+
+/// Stop-sequence matching over the accumulated answer.
+///
+/// Extracted so the CI self-check compiles the real implementation. The decode
+/// loop relies on this testing a suffix that can span two tokens.
+public enum StopMatching {
+    /// Returns the stop token that `text` ends with, longest first so a longer
+    /// token is not shadowed by a shorter one that is also a suffix.
+    public static func match(_ text: String, stopTokens: [String]) -> String? {
+        let candidates = stopTokens.filter { !$0.isEmpty }
+        for token in candidates.sorted(by: { $0.count > $1.count }) {
+            if text.hasSuffix(token) { return token }
+        }
+        return nil
+    }
+}

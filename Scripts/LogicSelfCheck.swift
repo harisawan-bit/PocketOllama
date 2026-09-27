@@ -153,6 +153,19 @@ struct LogicSelfCheck {
         check("ordinary name is preserved",
               DownloaderValidation.safeFileComponent("qwen2.5-0.5b") == "qwen2.5-0.5b")
 
+        print("Stop-sequence matching")
+        // The decode loop tests the suffix on the accumulated text. If this ever
+        // regressed to testing a partial buffer, a stop token split across two
+        // tokens would be missed and the answer would run on past it.
+        check("detects a stop token that lands mid-piece",
+              StopMatching.match("the answer is STOP and then more", stopTokens: ["STOP"]) == "STOP")
+        check("no false positive without the token",
+              StopMatching.match("the answer is finished", stopTokens: ["STOP"]) == nil)
+        check("longest matching stop token wins",
+              StopMatching.match("abc ENDING", stopTokens: ["END", "ENDING"]) == "ENDING")
+        check("empty stop tokens never match",
+              StopMatching.match("anything", stopTokens: ["", "  "]) == nil)
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and
