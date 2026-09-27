@@ -235,7 +235,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             RequestLogger.shared.log(method: method, path: path, statusCode: 200)
         } else if path == "/api/version" && method == "GET" {
             sendRaw(connection: connection, status: "200 OK", contentType: "application/json",
-                    body: "{\"version\":\"0.1.48-pocketollama\"}")
+                    body: "{\"version\":\"\(Self.appVersion)\"}")
             RequestLogger.shared.log(method: method, path: path, statusCode: 200)
         } else if path == "/v1/models" || path == "/api/tags" {
             let json = modelsJSON(name: activeModel)
@@ -256,6 +256,12 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
     }
 
     /// Lists every GGUF actually present on disk, with real sizes and the loaded one marked.
+    /// Real bundle version. /api/version used to hardcode "0.1.48" while the app
+    /// shipped 3.1.0, so an Ollama-compatible client was told the wrong version.
+    static let appVersion: String = {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+    }()
+
     private func modelsJSON(name: String) -> String {
         let dir = ModelDownloader.shared.getModelsDirectory()
         let fm = FileManager.default

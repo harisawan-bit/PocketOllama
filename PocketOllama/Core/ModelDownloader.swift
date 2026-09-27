@@ -26,12 +26,25 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
     @Published public private(set) var activeDownloads: [String: DownloadProgress] = [:]
     private var downloadTasks: [String: URLSessionDownloadTask] = [:]
     private var taskToModelId: [Int: String] = [:]
+    /// Persisted because iOS relaunches the process to finish a large download.
+    /// Without this, the completed file is thrown away on the relaunch.
+    private let mapDefaultsKey = "PocketOllama.taskToModelId"
+
+    /// Guards the mutable dictionaries. URLSession delivers delegate callbacks on a
+    /// background queue while startDownload/cancelDownload arrive on the caller's,
+    /// so these were being mutated concurrently.
+    private let lock = NSLock()
     private var lastBytesWritten: [String: (Int64, Date)] = [:]
     private var startedAt: [String: Date] = [:]
     private var session: URLSession!
 
     private override init() {
         super.init()
+        if let stored = UserDefaults.standard.dictionary(forKey: "PocketOllama.taskToModelId") as? [String: String] {
+            taskToModelId = stored.compactMapValues { $0 }.reduce(into: [:]) { acc, e in
+                if let k = Int(e.key) { acc[k] = e.value }
+            }
+        }
         let config = URLSessionConfiguration.background(withIdentifier: "com.haris.pocketollama.downloader")
         config.isDiscretionary = false
         config.sessionSendsLaunchEvents = true
@@ -50,10 +63,13 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
         downloadTasks[modelId]?.cancel()
 
         let task = session.downloadTask(with: url)
+        lock.lock()
         downloadTasks[modelId] = task
         taskToModelId[task.taskIdentifier] = modelId
         lastBytesWritten[modelId] = (0, Date())
         startedAt[modelId] = Date()
+        persistTaskMapLocked()
+        lock.unlock()
 
         let initialProgress = DownloadProgress(
             modelId: modelId,
@@ -82,9 +98,13 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
     }
 
     public func cancelDownload(modelId: String) {
-        if let task = downloadTasks[modelId] {
+        lock.lock()
+        let task = downloadTasks[modelId]
+        if let id = task?.taskIdentifier { taskToModelId.removeValue(forKey: id) }
+        downloadTasks.removeValue(forKey: modelId)
+        lock.unlock()
+        if let task = task {
             task.cancel()
-            downloadTasks.removeValue(forKey: modelId)
             DispatchQueue.main.async {
                 self.activeDownloads.removeValue(forKey: modelId)
             }
@@ -115,7 +135,10 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
         totalBytesWritten: Int64,
         totalBytesExpectedToWrite: Int64
     ) {
-        guard let modelId = taskToModelId[downloadTask.taskIdentifier] else { return }
+        lock.lock()
+        let modelId = taskToModelId[downloadTask.taskIdentifier]
+        lock.unlock()
+        guard let modelId = modelId else { return }
 
         let now = Date()
         var speed: Double = 0.0
@@ -153,10 +176,14 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
         task: URLSessionTask,
         didCompleteWithError error: Error?
     ) {
-        guard let modelId = taskToModelId[task.taskIdentifier] else { return }
-        taskToModelId.removeValue(forKey: task.taskIdentifier)
+        lock.lock()
+        let modelId = taskToModelId.removeValue(forKey: task.taskIdentifier)
         downloadTasks.removeValue(forKey: modelId)
         lastBytesWritten.removeValue(forKey: modelId)
+        startedAt.removeValue(forKey: modelId)
+        persistTaskMapLocked()
+        lock.unlock()
+        guard let modelId = modelId else { return }
 
         if let error = error as NSError? {
             if error.code == NSURLErrorCancelled { return }   // user tapped cancel
@@ -169,13 +196,27 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
         downloadTask: URLSessionDownloadTask,
         didFinishDownloadingTo location: URL
     ) {
-        guard let modelId = taskToModelId[downloadTask.taskIdentifier] else { return }
+        lock.lock()
+        let modelId = taskToModelId[downloadTask.taskIdentifier]
+        lock.unlock()
+        guard let modelId = modelId else {
+            print("[ModelDownloader] no modelId for finished task \(downloadTask.taskIdentifier)")
+            return
+        }
 
         let destDir = getModelsDirectory()
-        let destURL = destDir.appendingPathComponent("\(modelId).gguf")
+        // modelId became a filename unchecked; a separator here would escape the
+        // models directory.
+        let safeName = DownloaderValidation.safeFileComponent(modelId)
+        let destURL = destDir.appendingPathComponent("\(safeName).gguf")
 
         let fm = FileManager.default
         do {
+            guard DownloaderValidation.isGGUF(atPath: location.path) else {
+                publishFailure(modelId: modelId,
+                               message: "Downloaded file is not a GGUF model (bad or expired link).")
+                return
+            }
             if fm.fileExists(atPath: destURL.path) {
                 try fm.removeItem(at: destURL)
             }
@@ -203,6 +244,26 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
             print("[ModelDownloader] Error moving file: \(error)")
             publishFailure(modelId: modelId, message: "Download finished but could not be saved: \(error.localizedDescription)")
         }
+    }
+
+    /// iOS relaunches the app to finish a background download; once the delegate has
+    /// drained the events the system must be told it may suspend again.
+    public func backgroundCompletionHandler: (() -> Void)? {
+        get { _completionHandler }
+        set { _completionHandler = newValue }
+    }
+    private var _completionHandler: (() -> Void)?
+
+    public func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        let handler = _completionHandler
+        _completionHandler = nil
+        DispatchQueue.main.async { handler?() }
+    }
+
+    private func persistTaskMapLocked() {
+        UserDefaults.standard.set(
+            Dictionary(uniqueKeysWithValues: taskToModelId.map { (String($0.key), $0.value) }),
+            forKey: mapDefaultsKey)
     }
 
     /// Whole-file average, since the last progress callback carried the real one.

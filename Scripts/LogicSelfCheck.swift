@@ -128,6 +128,31 @@ struct LogicSelfCheck {
               ModelBudget.recommendKVQuant(metadata: gqa, desiredContext: 65536,
                 usableProcessRAMBytes: 5 * 1024 * 1024 * 1024, safetyBufferBytes: 0) == "q4_0")
 
+        print("GGUF validation")
+        // A download that returns HTTP 200 with an HTML error or rate-limit page
+        // used to be saved as <model>.gguf and only failed much later at load.
+        check("real GGUF magic is accepted",
+              DownloaderValidation.isGGUF(magic: [0x47, 0x47, 0x55, 0x46]))
+        check("HTML error page is rejected",
+              !DownloaderValidation.isGGUF(magic: Array("<!DOCTYPE h".utf8)))
+        check("truncated file is rejected",
+              !DownloaderValidation.isGGUF(magic: [0x47]))
+        check("empty file is rejected",
+              !DownloaderValidation.isGGUF(magic: []))
+        check("wrong-but-plausible magic is rejected",
+              !DownloaderValidation.isGGUF(magic: Array("PK\u{03}\u{04}".utf8)))
+
+        print("Download path safety")
+        // modelId became a filename unchecked; a separator escaped the models dir.
+        check("slash in modelId is neutralised",
+              DownloaderValidation.safeFileComponent("a/b") == "a_b")
+        check("traversal is neutralised",
+              !DownloaderValidation.safeFileComponent("../../etc/passwd").contains("/"))
+        check("dot-dot is neutralised",
+              !DownloaderValidation.safeFileComponent("..").contains(".."))
+        check("ordinary name is preserved",
+              DownloaderValidation.safeFileComponent("qwen2.5-0.5b") == "qwen2.5-0.5b")
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and

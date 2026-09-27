@@ -52,6 +52,17 @@ public final class AppDelegate: NSObject, UIApplicationDelegate {
         }
     }
 
+    /// Without this the system has no way to finish a large download that continued
+    /// after the app was suspended, and the app is never told when it may go back to
+    /// sleep.
+    public func application(
+        _ application: UIApplication,
+        handleEventsForBackgroundURLSession identifier: String,
+        completionHandler: @escaping () -> Void
+    ) {
+        ModelDownloader.shared.backgroundCompletionHandler = completionHandler
+    }
+
     public func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
         print("[PocketOllama] Kernel memory pressure alert. Triggering RAM scavenger...")
         MemoryScavenger.shared.purgeAndScavengeRAM(aggressive: ConfigEngine.shared.enableDarwinBalloonPurge)
