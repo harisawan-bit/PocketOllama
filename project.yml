@@ -34,6 +34,7 @@ targets:
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
         NSLocalNetworkUsageDescription: "PocketOllama serves an OpenAI-compatible API on your local Wi-Fi network."
+        NSBonjourServices: ["_ollama._tcp", "_openai._tcp"]
         UIBackgroundModes: ["audio"]
     entitlements:
       path: PocketOllama/Resources/PocketOllama.entitlements
