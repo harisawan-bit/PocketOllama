@@ -248,7 +248,7 @@ public actor LlamaEngine {
 
     public func streamInference(prompt: String, config: InferenceConfig = InferenceConfig()) -> AsyncThrowingStream<TokenDelta, Error> {
         AsyncThrowingStream { continuation in
-            let task = Task {
+            Task {
                 guard let ctx, let model, let vocab else {
                     continuation.finish(throwing: LlamaEngineError.notLoaded)
                     return
@@ -279,12 +279,16 @@ public actor LlamaEngine {
                 }
                 continuation.finish()
             }
-            // A dropped client cancels the decode loop deterministically now,
-            // rather than relying on the producer task noticing the consumer is gone.
-            // onTermination is a non-isolated @Sendable closure, so the actor state
-            // has to be hopped onto.
+            // A dropped client cancels the decode loop deterministically via the
+            // cancelRequested flag, which both the prefill and decode loops check.
+            //
+            // This closure must NOT capture `task`. The task's body holds the
+            // continuation, the continuation holds this closure, so capturing the
+            // task closed a cycle: every request leaked its Task along with the
+            // prompt, config and actor references it captured. The flag alone ends
+            // the stream within one token, and onTermination is a non-isolated
+            // @Sendable closure, so the actor state is hopped onto explicitly.
             continuation.onTermination = { _ in
-                task.cancel()
                 Task { [weak self] in await self?.markCancelled() }
             }
         }
@@ -336,11 +340,14 @@ public actor LlamaEngine {
         lastPromptTokens = Int(n)
 
         var i = 0
+        // Submit the exact batch the context was created with. This was hardcoded
+        // to 512, so the prefill-batch setting had no effect on anything.
+        let ubatch = Int(ContextSizing.batchSizes(
+            prefillBatch: ConfigEngine.shared.prefillBatchSize).ubatch)
         while i < Int(n) {
             if Task.isCancelled || cancelRequested { return }
-            // Match the physical batch the context was created with, so prefill
-            // submits full GPU-sized work instead of 256-token slivers.
-            let chunk = min(512, Int(n) - i)
+            // Never exceed n_ubatch: llama_decode rejects a larger batch.
+            let chunk = min(ubatch, Int(n) - i)
             let batch = llama_batch_get_one(&tokens[i], Int32(chunk))
             if llama_decode(ctx, batch) != 0 { throw LlamaEngineError.decodeFailed }
             i += chunk
@@ -360,6 +367,9 @@ public actor LlamaEngine {
         var full = ""
         var splitter = ReasoningSplitter()
         var utf8Buffer = PartialUTF8Decoder()
+        // Allocated once. These were rebuilt on every single token, which is a
+        // heap allocation per token for the lifetime of a generation.
+        var pieceBuf = [UInt8](repeating: 0, count: 256)
 
         while produced < config.maxTokens {
             if Task.isCancelled || cancelRequested {
@@ -373,11 +383,14 @@ public actor LlamaEngine {
             if llama_vocab_is_eog(vocab, id) { break }
             llama_sampler_accept(chain, id)
 
-            var pieceBuf = [CChar](repeating: 0, count: 64)
-            let pieceLen = llama_token_to_piece(vocab, id, &pieceBuf, Int32(pieceBuf.count), 0, false)
-            let pieceBytes = pieceLen > 0
-                ? pieceBuf.prefix(Int(pieceLen)).map { UInt8(bitPattern: $0) }
-                : []
+            // Decode straight into the reusable buffer. The previous form also
+            // allocated a second array per token to convert CChar to UInt8.
+            let pieceBytes: ArraySlice<UInt8> = pieceBuf.withUnsafeMutableBytes { raw -> ArraySlice<UInt8> in
+                let base = raw.baseAddress!.assumingMemoryBound(to: CChar.self)
+                let len = llama_token_to_piece(vocab, id, base, Int32(raw.count), 0, false)
+                guard len > 0 else { return ArraySlice() }
+                return pieceBuf[0..<Int(len)]
+            }
             // Byte-fallback BPE splits multi-byte characters across tokens, so the
             // tail of a piece may be an incomplete sequence. Hold it back until
             // the continuation token completes it.
@@ -391,9 +404,9 @@ public actor LlamaEngine {
 
             guard !piece.isEmpty else { continue }
 
-            let combined = full + piece
-            if let stop = Self.matchStop(combined, stopTokens: config.stopTokens) {
-                let trimmed = String(combined.dropLast(stop.count))
+            full += piece
+            if let stop = Self.matchStop(full, stopTokens: config.stopTokens) {
+                let trimmed = String(full.dropLast(stop.count))
                 let finalSplit = ReasoningSplitter().replay(trimmed)
                 lastCompletionTokens = produced
                 continuation.yield(TokenDelta(
@@ -404,7 +417,6 @@ public actor LlamaEngine {
                 ))
                 return
             }
-            full = combined
 
             let parts = splitter.push(piece)
             if !parts.text.isEmpty || parts.reasoning != nil {

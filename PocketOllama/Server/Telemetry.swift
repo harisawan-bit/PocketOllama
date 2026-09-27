@@ -1,6 +1,5 @@
 import Foundation
 import Combine
-import MachO
 
 public final class TelemetryManager: ObservableObject, @unchecked Sendable {
     public static let shared = TelemetryManager()

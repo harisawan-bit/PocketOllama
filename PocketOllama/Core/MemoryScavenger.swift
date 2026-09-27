@@ -1,5 +1,4 @@
 import Foundation
-import MachO
 import Metal
 import Darwin
 
@@ -8,28 +7,20 @@ public final class MemoryScavenger: @unchecked Sendable {
 
     private init() {}
 
+    /// Real memory pressure, straight from the kernel. The deployment target is
+    /// 16.4, so the old pre-iOS-13 host_statistics64 fallback was unreachable.
     public func getAvailableMemoryBytes() -> UInt64 {
-        if #available(iOS 13.0, *) {
-            return UInt64(os_proc_available_memory())
-        } else {
-            var stats = vm_statistics64()
-            var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size)
-            let result = withUnsafeMutablePointer(to: &stats) {
-                $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                    host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
-                }
-            }
-            if result == KERN_SUCCESS {
-                let pageSize = UInt64(vm_kernel_page_size)
-                return UInt64(stats.free_count) * pageSize
-            }
-            return 2 * 1024 * 1024 * 1024
-        }
+        UInt64(os_proc_available_memory())
     }
 
-    /// Aggressively purges caches and signals Darwin VM to compress background apps and free RAM
-    /// - Parameter aggressive: runs the transient balloon pulse and heap relief.
-    ///   The toggle in Engine Configuration maps to this; it was previously never read.
+    /// Drops this process's own reclaimable memory: URL cache, then allocator
+    /// free-list pages.
+    ///
+    /// - Parameter aggressive: also relieves the malloc zone. The Engine
+    ///   Configuration toggle maps here.
+    ///
+    /// It cannot free memory held by other apps, and it cannot make the OS
+    /// suspend anything. The previous wording overstated what this can do.
     @discardableResult
     public func purgeAndScavengeRAM(aggressive: Bool = true) -> UInt64 {
         // 1. Drain top-level caches
@@ -37,17 +28,14 @@ public final class MemoryScavenger: @unchecked Sendable {
 
         guard aggressive else { return getAvailableMemoryBytes() }
 
-        // 2. Darwin Memory Balloon Pulse: Briefly signals memory manager to reclaim inactive pages
-        autoreleasepool {
-            // Allocate and discard transient purgeable buffer to signal Darwin VM compaction
-            let balloonSize = 64 * 1024 * 1024 // 64MB transient pulse
-            if let ptr = malloc(balloonSize) {
-                posix_madvise(ptr, balloonSize, POSIX_MADV_DONTNEED)
-                free(ptr)
-            }
-        }
-
-        // 3. Relieve Mach heap zone pressure
+        // 2. Relieve allocator pressure. This is the call that actually does
+        //    something: it makes the zone release free pages back to the system.
+        //
+        //    The removed "memory balloon" allocated 64 MB, madvised it away and
+        //    freed it while claiming to signal Darwin compaction. That sequence
+        //    reclaims nothing: a fresh anonymous block that is discarded straight
+        //    away never leaves the allocator, and it spiked usage by 64 MB in a
+        //    memory-critical path to do it.
         malloc_zone_pressure_relief(malloc_default_zone(), 0)
 
         let after = getAvailableMemoryBytes()

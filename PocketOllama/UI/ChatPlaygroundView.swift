@@ -302,6 +302,14 @@ public struct ChatPlaygroundView: View {
         messages.append(assistantMsg)
         let assistantIndex = messages.count - 1
 
+        // Leaving the tab clears `messages` while generation may still be
+        // streaming, so a captured offset can point past the end of the array.
+        // Resolve the index on every access and skip the update if it is gone.
+        func updateAssistant(_ mutate: (inout ChatMessage) -> Void) {
+            guard messages.indices.contains(assistantIndex) else { return }
+            mutate(&messages[assistantIndex])
+        }
+
         generationTask = Task {
             // LlamaEngine.formatPrompt parses role-prefixed blocks and applies the
             // model own chat template. Do not hand-build ChatML here.
@@ -313,12 +321,12 @@ public struct ChatPlaygroundView: View {
                     await MainActor.run {
                         self.generatedTokens += 1
                         if let reasoning = delta.reasoningText {
-                            var currentReasoning = self.messages[assistantIndex].reasoningContent ?? ""
-                            currentReasoning += reasoning
-                            self.messages[assistantIndex].reasoningContent = currentReasoning
+                            updateAssistant { m in
+                                m.reasoningContent = (m.reasoningContent ?? "") + reasoning
+                            }
                         }
                         if !delta.text.isEmpty {
-                            self.messages[assistantIndex].content += delta.text
+                            updateAssistant { m in m.content += delta.text }
                         }
                     }
                 }
@@ -328,7 +336,8 @@ public struct ChatPlaygroundView: View {
                     self.generationTask = nil
                     if let start = self.generationStartTime {
                         let duration = max(0.01, Date().timeIntervalSince(start))
-                        self.messages[assistantIndex].tokensPerSecond = Double(self.generatedTokens) / duration
+                        let tps = Double(self.generatedTokens) / duration
+                        updateAssistant { $0.tokensPerSecond = tps }
                     }
                 }
             } catch {
@@ -336,7 +345,7 @@ public struct ChatPlaygroundView: View {
                 await MainActor.run {
                     self.isGenerating = false
 
-                    self.messages[assistantIndex].content = "Error: \(message)"
+                    updateAssistant { $0.content = "Error: \(message)" }
                 }
             }
         }
