@@ -230,7 +230,8 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
 
         if (path == "/" || path == "/index.html") && method == "GET" {
             sendRaw(connection: connection, status: "200 OK", contentType: "text/html; charset=utf-8",
-                    body: WebDashboardHTML.render(serverIP: localIPAddress, port: formattedPort, modelName: activeModel))
+                    body: WebDashboardHTML.render(serverIP: localIPAddress, port: formattedPort,
+                                              modelName: activeModel, apiKey: Self.apiKey ?? ""))
             RequestLogger.shared.log(method: method, path: path, statusCode: 200)
         } else if path == "/api/version" && method == "GET" {
             sendRaw(connection: connection, status: "200 OK", contentType: "application/json",

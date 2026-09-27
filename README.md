@@ -89,6 +89,13 @@ You can also drop any `.gguf` file into `Documents/models` through Finder or the
 Context limits are clamped against measured available memory at load time, so a device with less free
 RAM than the table implies will get a smaller context rather than a crash.
 
+## Security
+
+The server binds every Wi-Fi interface. On a shared or untrusted network, set an
+API key in **Settings -> Engine Configuration -> Remote Access Authentication**.
+`/v1/*` and `/api/*` then require `Authorization: Bearer <key>`. The health
+endpoint and the web dashboard stay reachable so the key can be entered there.
+
 ## Known limits
 
 - iOS 16.4 or later, device only. There is no simulator slice of the pinned XCFramework.

@@ -1,7 +1,7 @@
 import Foundation
 
 public enum WebDashboardHTML {
-    public static func render(serverIP: String, port: String, modelName: String) -> String {
+    public static func render(serverIP: String, port: String, modelName: String, apiKey: String = "") -> String {
         return """
         <!DOCTYPE html>
         <html lang="en">
@@ -78,6 +78,12 @@ public enum WebDashboardHTML {
                     </div>
                 </div>
 
+                <div id="apikey-row" style="display: \(apiKey.isEmpty ? "none" : "flex"); margin-bottom: 8px;">
+                    <input id="apikey-input" type="password" placeholder="API key (required)"
+                           onkeydown="if(event.key==='Enter'){ localStorage.setItem('poApiKey', this.value.trim()); this.value=''; sendPrompt(); }" />
+                    <button onclick="localStorage.setItem('poApiKey', document.getElementById('apikey-input').value.trim()); document.getElementById('apikey-input').value=''; sendPrompt();">SET</button>
+                </div>
+
                 <div id="chat-input-row">
                     <input id="prompt-input" type="text" placeholder="Type prompt and press Enter..." autofocus onkeydown="if(event.key==='Enter') sendPrompt()" />
                     <button onclick="sendPrompt()">SEND</button>
@@ -106,15 +112,26 @@ public enum WebDashboardHTML {
                     msgs.scrollTop = msgs.scrollHeight;
 
                     try {
+                        const headers = { 'Content-Type': 'application/json' };
+                        const poKey = localStorage.getItem('poApiKey') || '';
+                        if (poKey) { headers['Authorization'] = 'Bearer ' + poKey; }
                         const res = await fetch(endpoint, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
+                            headers: headers,
                             body: JSON.stringify({
                                 model: '\(modelName)',
                                 messages: [{ role: 'user', content: text }],
                                 stream: true
                             })
                         });
+
+                        if (!res.ok) {
+                            let detail = '';
+                            try { detail = (await res.text()).slice(0, 300); } catch (e) {}
+                            assistantBubble.innerHTML = '<span style="color: #ef4444;">HTTP ' + res.status +
+                                (detail ? ' - ' + detail : '') + '</span>';
+                            return;
+                        }
 
                         const reader = res.body.getReader();
                         const decoder = new TextDecoder();
