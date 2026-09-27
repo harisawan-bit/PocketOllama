@@ -28,7 +28,7 @@ public struct TokenDelta: Sendable {
     public let isFinished: Bool
 }
 
-public public enum LlamaEngineError: LocalizedError {
+public enum LlamaEngineError: LocalizedError {
     case fileNotFound(String)
     case loadFailed(String)
     case contextInitFailed(String)
