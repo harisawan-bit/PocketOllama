@@ -274,7 +274,7 @@ public actor LlamaEngine {
             // Dropping the leading tokens would delete the system prompt and the
             // start of the conversation, so drop from the middle instead and keep
             // the instructions at the head and the question at the tail.
-            let trimmed = JetsamShield.shared.compactTokenWindow(tokens, limit: promptBudget)
+            let trimmed = PromptCompaction.compactTokenWindow(tokens, limit: promptBudget)
             tokens = trimmed
             n = Int32(trimmed.count)
         }
@@ -528,45 +528,5 @@ struct ReasoningSplitter {
             }
         }
         return best
-    }
-}
-
-/// Accumulates token bytes and emits only complete UTF-8 sequences.
-/// A token boundary can fall inside a multi-byte character; decoding each token
-/// alone yields U+FFFD for any non-ASCII output.
-struct PartialUTF8Decoder {
-    private var pending: [UInt8] = []
-
-    mutating func append<S: Sequence>(contentsOf bytes: S) where S.Element == UInt8 {
-        pending.append(contentsOf: bytes)
-    }
-
-    /// Emits every complete sequence and retains a trailing partial one.
-    mutating func drainDecodable() -> String {
-        var out = ""
-        var i = 0
-        while i < pending.count {
-            let b = pending[i]
-            let width: Int
-            var valid = true
-            switch b {
-            case 0x00...0x7F: width = 1
-            case 0xC2...0xDF: width = 2
-            case 0xE0...0xEF: width = 3
-            case 0xF0...0xF4: width = 4
-            default: width = 1; valid = false      // stray continuation/lead byte
-            }
-
-            if !valid {
-                out.append(Character(UnicodeScalar(b)))
-                i += 1
-                continue
-            }
-            if i + width > pending.count { break }  // incomplete, wait for more
-            out.append(contentsOf: String(decoding: pending[i..<(i + width)], as: UTF8.self))
-            i += width
-        }
-        pending.removeFirst(i)
-        return out
     }
 }

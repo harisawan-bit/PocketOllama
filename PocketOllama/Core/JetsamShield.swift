@@ -1,5 +1,4 @@
 import Foundation
-import llama
 
 public struct MemoryBudgetResult: Sendable {
     public let isSafe: Bool
@@ -98,16 +97,5 @@ public final class JetsamShield: @unchecked Sendable {
         let prefix = String(prompt.prefix(prefixLength))
         let suffix = String(prompt.suffix(suffixLength))
         return ("\(prefix)\n\n[... Context compacted by Middle-Out Shield ...]\n\n\(suffix)", true)
-    }
-    /// Trims an over-long prompt by dropping tokens from the middle, keeping the
-    /// head (system instructions) and the tail (the user's actual question).
-    /// Truncating from the front instead silently deleted the system prompt and
-    /// the opening turns, which made the model answer the wrong thing.
-    public func compactTokenWindow(_ tokens: [llama_token], limit: Int) -> [llama_token] {
-        guard tokens.count > limit, limit > 0 else { return tokens }
-        let headCount = max(1, limit / 4)
-        // No separator token: llama_token(0) is <unk> in most vocabs and injecting
-        // it mid-prompt can corrupt generation. Head and tail are what matter.
-        return Array(tokens.prefix(headCount)) + Array(tokens.suffix(limit - headCount))
     }
 }

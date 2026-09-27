@@ -40,7 +40,9 @@ jobs:
         run: chmod +x Scripts/verify_no_stubs.sh && ./Scripts/verify_no_stubs.sh
 
       - name: Self-check the non-obvious inference logic
-        run: swift Scripts/LogicSelfCheck.swift
+        run: |
+          swiftc -O PocketOllama/Inference/PromptCompaction.swift Scripts/LogicSelfCheck.swift -o "$RUNNER_TEMP/po-check"
+          "$RUNNER_TEMP/po-check"
 
       - name: Build (unsigned)
         run: |
