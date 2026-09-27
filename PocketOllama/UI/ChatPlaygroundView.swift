@@ -15,6 +15,14 @@ public struct ChatPlaygroundView: View {
     @State private var isGenerating: Bool = false
     @State private var generationStartTime: Date?
     @State private var generatedTokens: Int = 0
+    @State private var loadedModelName: String = ""
+    @State private var isModelReady: Bool = false
+
+    private var canSend: Bool {
+        isModelReady
+            && !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !isGenerating
+    }
 
     public var body: some View {
         ZStack {
@@ -52,6 +60,17 @@ public struct ChatPlaygroundView: View {
                 inputBar
             }
         }
+        .task { await refreshModelState() }
+    }
+
+    /// Reads the engine state so the header and send button reflect reality.
+    private func refreshModelState() async {
+        let ready = await LlamaEngine.shared.isModelReady
+        let name = ready ? await LlamaEngine.shared.activeModelName : ""
+        await MainActor.run {
+            self.isModelReady = ready
+            self.loadedModelName = name
+        }
     }
 
     // MARK: - Top Terminal Header
@@ -64,6 +83,16 @@ public struct ChatPlaygroundView: View {
                 Text("LOCAL INFERENCE TERMINAL")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
+                if isModelReady {
+                    Text(loadedModelName)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(PocketTheme.terminalGreen)
+                        .lineLimit(1)
+                } else {
+                    Text("no model loaded")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(PocketTheme.textMuted)
+                }
             }
             Spacer()
 
@@ -210,7 +239,7 @@ public struct ChatPlaygroundView: View {
                     .font(.system(size: 28))
                     .foregroundColor(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating ? PocketTheme.textMuted : PocketTheme.devCyan)
             }
-            .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isGenerating)
+            .disabled(!canSend)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
@@ -238,7 +267,9 @@ public struct ChatPlaygroundView: View {
         let assistantIndex = messages.count - 1
 
         Task {
-            let prompt = "<|im_start|>user\n\(text)<|im_end|>\n<|im_start|>assistant\n"
+            // LlamaEngine.formatPrompt parses role-prefixed blocks and applies the
+            // model own chat template. Do not hand-build ChatML here.
+            let prompt = "user\n\(text)"
             let stream = await LlamaEngine.shared.streamInference(prompt: prompt)
 
             do {
@@ -264,9 +295,11 @@ public struct ChatPlaygroundView: View {
                     }
                 }
             } catch {
+                let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 await MainActor.run {
                     self.isGenerating = false
-                    self.messages[assistantIndex].content = "Inference completed."
+                    self.messages[assistantIndex].isStreaming = false
+                    self.messages[assistantIndex].content = "Error: \(message)"
                 }
             }
         }
