@@ -7,6 +7,25 @@
 //          Scripts/LogicSelfCheck.swift -o /tmp/po-check && /tmp/po-check
 import Foundation
 
+/// Minimal stand-in so ModelBudget can be exercised without the real GGUF parser.
+struct BudgetFixture: GGUFBudgetFields {
+    var contextLengthTrained: Int
+    var layerCount: Int
+    var embeddingLength: Int
+    var headCount: Int
+    var headCountKV: Int
+    var fileSizeBytes: UInt64
+
+    init(_ ctx: Int, layers: Int = 32, embd: Int = 4096, heads: Int = 32, kvHeads: Int = 8, sizeGB: Double = 2.0) {
+        self.contextLengthTrained = ctx
+        self.layerCount = layers
+        self.embeddingLength = embd
+        self.headCount = heads
+        self.headCountKV = kvHeads
+        self.fileSizeBytes = UInt64(sizeGB * 1024 * 1024 * 1024)
+    }
+}
+
 @main
 struct LogicSelfCheck {
     static var failures = 0
