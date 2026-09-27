@@ -14,7 +14,7 @@ public struct DeviceHardwareSpec: Sendable, Codable {
     /// Always derived from the real performance cores by detectProfile. The
     /// lookup table omits it; the default only keeps the memberwise init valid
     /// for those call sites and is never the value that ships.
-    public let optimalThreadCount: Int = 2
+    public var optimalThreadCount: Int = 2
     public let maxSafeContextTokens: Int
     public let defaultKVQuant: String
     public let supportsSpeculative: Bool
