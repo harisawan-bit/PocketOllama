@@ -12,6 +12,8 @@ public struct DashboardBentoView: View {
     @State private var showingSettings = false
     @State private var showingQRConnect = false
     @State private var copyNotification: String? = nil
+    @State private var reloadingForContext: Bool = false
+    @State private var contextReloadError: String? = nil
 
     let hardware = HardwareAutoTuner.shared.detectProfile()
 
@@ -198,6 +200,34 @@ public struct DashboardBentoView: View {
         .devCard(cornerRadius: 8)
     }
 
+    /// Re-initialises the llama context at the newly chosen window size.
+    /// The window is fixed when llama_init_from_model runs, so a slider move
+    /// without a reload would silently do nothing.
+    private func reloadModelForContext() async {
+        let name = await LlamaEngine.shared.activeModelName
+        let dir = ModelDownloader.shared.getModelsDirectory()
+        let path = dir.appendingPathComponent(name).path
+        guard FileManager.default.fileExists(atPath: path) else {
+            await MainActor.run {
+                reloadingForContext = false
+                contextReloadError = "Model file not found on disk. Load it again from the Models tab."
+            }
+            return
+        }
+        do {
+            try await LlamaEngine.shared.loadModel(path: path, targetContext: config.contextWindowTokens)
+            await MainActor.run {
+                reloadingForContext = false
+                contextReloadError = nil
+            }
+        } catch {
+            await MainActor.run {
+                reloadingForContext = false
+                contextReloadError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            }
+        }
+    }
+
     // MARK: - Active Model & Context Allocation HUD
     private var modelContextHUD: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -214,12 +244,36 @@ public struct DashboardBentoView: View {
             Slider(
                 value: Binding(
                     get: { Double(config.contextWindowTokens) },
-                    set: { config.contextWindowTokens = Int($0) }
+                    set: { newValue in
+                        let target = Int(newValue)
+                        guard target != config.contextWindowTokens else { return }
+                        config.contextWindowTokens = target
+                        // The context window is fixed when llama_init_from_model runs, so
+                        // changing it requires a reload to take effect.
+                        if LlamaEngine.shared.isModelReady {
+                            reloadingForContext = true
+                            Task { await reloadModelForContext() }
+                        }
+                    }
                 ),
                 in: 2048...Double(max(2048, config.maxSafeContextTokens)),
                 step: 1024
             )
+            .disabled(reloadingForContext)
             .accentColor(PocketTheme.devCyan)
+
+            if reloadingForContext {
+                HStack(spacing: 6) {
+                    ProgressView().scaleEffect(0.5).tint(PocketTheme.devCyan)
+                    Text("Reloading model at \(config.contextWindowTokens) tokens...")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(PocketTheme.devCyan)
+                }
+            } else if let err = contextReloadError {
+                Text(err)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(PocketTheme.roseAlert)
+            }
 
             HStack {
                 Text("Safe Max: \(config.maxSafeContextTokens) tokens")
