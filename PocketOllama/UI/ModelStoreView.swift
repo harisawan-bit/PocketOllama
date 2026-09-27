@@ -148,7 +148,7 @@ public struct ModelStoreView: View {
                 Text("LOCAL MODEL REPOSITORY")
                     .font(.system(size: 10, weight: .black, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
-                Text("Zero-Copy GGUF Engine")
+                Text("llama.cpp Metal Engine")
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundColor(PocketTheme.textPrimary)
             }
@@ -228,7 +228,7 @@ public struct ModelStoreView: View {
                                 if isLoadingModel && item.isLoaded {
                                     ProgressView().scaleEffect(0.6).tint(PocketTheme.devCyan)
                                 }
-                                Text(item.isLoaded ? "Active in RAM" : "Load into RAM (<50ms)")
+                                Text(item.isLoaded ? "Loaded" : "Load into RAM")
                                     .font(.system(size: 11, weight: .bold, design: .monospaced))
                             }
                             .frame(maxWidth: .infinity)

@@ -59,6 +59,7 @@ public actor LlamaEngine {
     private var loadedModelPath = ""
     private var activeContextSize = 4096
     private var isGenerating = false
+    private var lastPromptTokens = 0
 
     private init() {
         llama_backend_init()
@@ -70,6 +71,10 @@ public actor LlamaEngine {
     }
 
     public var isModelReady: Bool { ctx != nil }
+
+    /// Prompt and completion token counts from the most recent generation.
+    public var lastUsage: (prompt: Int, completion: Int) { (lastPromptTokens, lastCompletionTokens) }
+    private var lastCompletionTokens = 0
     public var isBusy: Bool { isGenerating }
     public var contextSize: Int { activeContextSize }
 
@@ -160,6 +165,8 @@ public actor LlamaEngine {
                     return
                 }
                 isGenerating = true
+                lastPromptTokens = 0
+                lastCompletionTokens = 0
                 defer { isGenerating = false }
 
                 do {
@@ -212,6 +219,7 @@ public actor LlamaEngine {
         }
 
         llama_memory_clear(llama_get_memory(ctx), true)
+        lastPromptTokens = Int(n)
 
         var i = 0
         while i < Int(n) {
@@ -282,6 +290,8 @@ public actor LlamaEngine {
                 ))
             }
         }
+
+        lastCompletionTokens = produced
 
         let tail = splitter.flush()
         continuation.yield(TokenDelta(

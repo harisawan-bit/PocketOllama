@@ -217,20 +217,36 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         }
     }
 
+    /// Lists every GGUF actually present on disk, with real sizes and the loaded one marked.
     private func modelsJSON(name: String) -> String {
-        let entry = """
-              {
-                "id": "\(name.jsonSafe)",
-                "object": "model",
-                "created": 1700000000,
-                "owned_by": "pocketollama",
-                "name": "\(name.jsonSafe)",
-                "model": "\(name.jsonSafe)",
-                "modified_at": "2026-01-01T00:00:00Z",
-                "size": 0
-              }
-        """
-        return "{\"object\":\"list\",\"data\":[\(entry)]}"
+        let dir = ModelDownloader.shared.getModelsDirectory()
+        let fm = FileManager.default
+        let files = (try? fm.contentsOfDirectory(atPath: dir.path))?
+            .filter { $0.hasSuffix(".gguf") }
+            .sorted() ?? []
+
+        var entries: [String] = []
+        for file in files {
+            let size = (try? fm.attributesOfItem(atPath: dir.appendingPathComponent(file).path)[.size] as? Int64) ?? 0
+            let id = (file as NSString).deletingPathExtension
+            let entry = """
+            {"id":"\(id.jsonSafe)","object":"model","created":1700000000,"owned_by":"pocketollama",
+             "name":"\(id.jsonSafe)","model":"\(id.jsonSafe)",
+             "modified_at":"2026-01-01T00:00:00Z","size":\(size)}
+            """
+            entries.append(entry)
+        }
+
+        if entries.isEmpty {
+            let entry = """
+            {"id":"\(name.jsonSafe)","object":"model","created":1700000000,"owned_by":"pocketollama",
+             "name":"\(name.jsonSafe)","model":"\(name.jsonSafe)",
+             "modified_at":"2026-01-01T00:00:00Z","size":0}
+            """
+            entries.append(entry)
+        }
+
+        return "{\"object\":\"list\",\"data\":[\(entries.joined(separator: ","))]}"
     }
 
     private func handleChat(_ request: HTTPRequest, connection: NWConnection?) async {
@@ -274,7 +290,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         let start = Date()
         var completionText = ""
         var completionReasoning = ""
-        let promptTokens = 0
+        var promptTokens = 0
         var completionTokens = 0
         var toolCalls: [OpenAIToolCall] = []
 
@@ -316,10 +332,12 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                 return
             }
 
+            let usage = await LlamaEngine.shared.lastUsage
+            promptTokens = usage.prompt
             let duration = max(0.001, Date().timeIntervalSince(start))
-            TelemetryManager.shared.recordTokensGenerated(count: completionTokens, durationSeconds: duration)
+            TelemetryManager.shared.recordTokensGenerated(count: usage.completion, durationSeconds: duration)
             RequestLogger.shared.log(method: "POST", path: path, statusCode: 200,
-                                     tokensGenerated: completionTokens, durationSeconds: duration)
+                                     tokensGenerated: usage.completion, durationSeconds: duration)
 
             if path == "/v1/chat/completions" {
                 if let connection {
@@ -345,14 +363,16 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                 return
             }
 
+            let usage = await LlamaEngine.shared.lastUsage
+            promptTokens = usage.prompt
             let duration = max(0.001, Date().timeIntervalSince(start))
-            TelemetryManager.shared.recordTokensGenerated(count: completionTokens, durationSeconds: duration)
+            TelemetryManager.shared.recordTokensGenerated(count: usage.completion, durationSeconds: duration)
 
             let body: String
             if isOllama {
                 body = """
                 {"model":"\(model.jsonSafe)","message":{"role":"assistant","content":"\(completionText.jsonSafe)"},"done":true,
-                 "done_reason":"stop","prompt_eval_count":\(promptTokens),"eval_count":\(completionTokens)}
+                 "done_reason":"stop","prompt_eval_count":\(promptTokens),"eval_count":\(usage.completion)}
                 """
             } else {
                 toolCalls = HermesToolBridge.shared.parseStreamingChunk(accumulatedText: completionText).toolCalls
@@ -361,12 +381,12 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                 body = """
                 {"id":"\(id)","object":"chat.completion","created":1700000000,"model":"\(model.jsonSafe)",
                  "choices":[{"index":0,"message":{"role":"assistant","content":"\(completionText.jsonSafe)"\(toolBlock)},"finish_reason":"\(finish)"}],
-                 "usage":{"prompt_tokens":\(promptTokens),"completion_tokens":\(completionTokens),"total_tokens":\(promptTokens + completionTokens)}}
+                 "usage":{"prompt_tokens":\(promptTokens),"completion_tokens":\(usage.completion),"total_tokens":\(promptTokens + usage.completion)}}
                 """
             }
             sendRaw(connection: connection, status: "200 OK", contentType: "application/json", body: body)
             RequestLogger.shared.log(method: "POST", path: path, statusCode: 200,
-                                     tokensGenerated: completionTokens, durationSeconds: duration)
+                                     tokensGenerated: usage.completion, durationSeconds: duration)
         }
     }
 
