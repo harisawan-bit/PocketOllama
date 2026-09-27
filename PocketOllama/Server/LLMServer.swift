@@ -210,7 +210,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         // The listener accepts every interface, so inference endpoints require the
         // API key when one is set. Otherwise anyone on the same Wi-Fi could drive
         // the GPU and read the model. Health checks and the dashboard stay open.
-        if let key = apiKey, !key.isEmpty, Self.requiresAuth(path) {
+        if let key = Self.apiKey, !key.isEmpty, Self.requiresAuth(path) {
             let presented = request.authorization?
                 .replacingOccurrences(of: "Bearer ", with: "")
                 .trimmingCharacters(in: .whitespaces)
