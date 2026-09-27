@@ -177,13 +177,15 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
         didCompleteWithError error: Error?
     ) {
         lock.lock()
-        let modelId = taskToModelId.removeValue(forKey: task.taskIdentifier)
-        downloadTasks.removeValue(forKey: modelId)
-        lastBytesWritten.removeValue(forKey: modelId)
-        startedAt.removeValue(forKey: modelId)
+        let resolved = taskToModelId.removeValue(forKey: task.taskIdentifier)
+        if let modelId = resolved {
+            downloadTasks.removeValue(forKey: modelId)
+            lastBytesWritten.removeValue(forKey: modelId)
+            startedAt.removeValue(forKey: modelId)
+        }
         persistTaskMapLocked()
         lock.unlock()
-        guard let modelId = modelId else { return }
+        guard let modelId = resolved else { return }
 
         if let error = error as NSError? {
             if error.code == NSURLErrorCancelled { return }   // user tapped cancel
@@ -248,7 +250,7 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
 
     /// iOS relaunches the app to finish a background download; once the delegate has
     /// drained the events the system must be told it may suspend again.
-    public func backgroundCompletionHandler: (() -> Void)? {
+    public var backgroundCompletionHandler: (() -> Void)? {
         get { _completionHandler }
         set { _completionHandler = newValue }
     }
