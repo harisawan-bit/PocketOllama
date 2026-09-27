@@ -106,6 +106,14 @@ public actor LlamaEngine {
         var mparams = llama_model_default_params()
         mparams.n_gpu_layers = 999
 
+        // Honour the mlock setting. llama.cpp gates this on device support, so a
+        // device that cannot lock pages silently falls back to plain mmap.
+        if ConfigEngine.shared.enableMemoryLock, llama_supports_mlock() {
+            mparams.load_mode = LLAMA_LOAD_MODE_MMAP_MLOCK
+        } else {
+            mparams.load_mode = LLAMA_LOAD_MODE_MMAP
+        }
+
         guard let m = llama_model_load_from_file(path, mparams) else {
             throw LlamaEngineError.loadFailed((path as NSString).lastPathComponent)
         }
@@ -116,6 +124,12 @@ public actor LlamaEngine {
         cparams.n_ubatch = 256
         cparams.n_threads = Int32(ConfigEngine.shared.threadCount)
         cparams.n_threads_batch = Int32(ConfigEngine.shared.threadCount)
+
+        // Apply the chosen KV cache quantisation. Leaving this at the f16 default
+        // is what the "q4_0" recommendation was meant to avoid, but it was never
+        // passed through, so the setting did nothing.
+        cparams.type_k = Self.ggmlType(forKVQuant: ConfigEngine.shared.kvQuantization)
+        cparams.type_v = cparams.type_k
 
         guard let c = llama_init_from_model(m, cparams) else {
             llama_model_free(m)
@@ -186,6 +200,15 @@ public actor LlamaEngine {
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// Maps a KV quantisation name onto a ggml type, falling back to f16.
+    private static func ggmlType(forKVQuant name: String) -> ggml_type {
+        switch name.lowercased() {
+        case "q4_0": return GGML_TYPE_Q4_0
+        case "q8_0": return GGML_TYPE_Q8_0
+        default: return GGML_TYPE_F16
         }
     }
 
