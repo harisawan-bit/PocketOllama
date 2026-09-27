@@ -28,27 +28,28 @@ public struct TokenDelta: Sendable {
     public let isFinished: Bool
 }
 
-public enum LlamaEngineError: LocalizedError {
+public public enum LlamaEngineError: LocalizedError {
     case fileNotFound(String)
     case loadFailed(String)
-    case contextInitFailed
+    case contextInitFailed(String)
     case notLoaded
     case busy
-    case tokenizeFailed
+    case tokenizeFailed(String)
     case decodeFailed
 
     public var errorDescription: String? {
         switch self {
-        case .fileNotFound(let p): return "GGUF file not found: \(p)"
-        case .loadFailed(let p): return "Could not load model: \(p)"
-        case .contextInitFailed: return "Could not create inference context. Not enough available memory for the requested context size."
-        case .notLoaded: return "No model loaded"
-        case .busy: return "Model is already generating"
-        case .tokenizeFailed: return "Tokenization failed"
-        case .decodeFailed: return "Inference decode failed"
+        case .fileNotFound(let p):      return "Model file not found at \(p)"
+        case .loadFailed(let d):        return "Could not load the model: \(d)"
+        case .contextInitFailed(let d): return "Could not create the inference context: \(d)"
+        case .notLoaded:                return "No model is loaded. Download one and tap Load first."
+        case .busy:                     return "A request is already in progress. Wait for it to finish."
+        case .tokenizeFailed:           return "The prompt could not be tokenised by this model."
+        case .decodeFailed:             return "Inference failed while decoding."
         }
     }
 }
+
 
 public actor LlamaEngine {
     public static let shared = LlamaEngine()
@@ -200,7 +201,9 @@ public actor LlamaEngine {
 
         guard let c = llama_init_from_model(m, cparams) else {
             llama_model_free(m)
-            throw LlamaEngineError.contextInitFailed
+            throw LlamaEngineError.contextInitFailed(
+            "llama_init_from_model returned nonzero. The model may be truncated, "
+            + "incompatible with this build, or the context may not fit in memory.")
         }
 
         model = m
@@ -314,7 +317,7 @@ public actor LlamaEngine {
     ) async throws {
         let formatted = Self.formatPrompt(prompt, model: model)
         let byteCount = formatted.utf8.count
-        guard byteCount > 0 else { throw LlamaEngineError.tokenizeFailed }
+        guard byteCount > 0 else { throw LlamaEngineError.tokenizeFailed("the prompt is empty or exceeds the context window") }
 
         var tokens = [llama_token](repeating: 0, count: max(64, byteCount + 32))
         var n = llama_tokenize(vocab, formatted, Int32(byteCount), &tokens, Int32(tokens.count), true, true)
@@ -322,7 +325,7 @@ public actor LlamaEngine {
             tokens = [llama_token](repeating: 0, count: Int(-n) + 32)
             n = llama_tokenize(vocab, formatted, Int32(byteCount), &tokens, Int32(tokens.count), true, true)
         }
-        guard n > 0 else { throw LlamaEngineError.tokenizeFailed }
+        guard n > 0 else { throw LlamaEngineError.tokenizeFailed("the prompt is empty or exceeds the context window") }
 
         // Leave headroom in the KV cache so generation cannot overflow it.
         let reserve = min(config.maxTokens, 1024)

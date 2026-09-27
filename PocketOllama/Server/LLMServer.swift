@@ -424,9 +424,21 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                     if delta.isFinished { break }
                 }
             } catch {
-                sendRaw(connection: connection, status: "500 Internal Server Error", contentType: "application/json",
-                        body: "{\"error\":{\"message\":\"Inference failed\",\"type\":\"server_error\"}}")
-                RequestLogger.shared.log(method: "POST", path: path, statusCode: 500)
+                // A second request arriving while one is generating is retryable,
+                // not a server fault. It was reported as 500, which told clients
+                // not to retry something that succeeds seconds later.
+                let isBusy: Bool
+                if case LlamaEngineError.busy = error { isBusy = true } else { isBusy = false }
+                let status = isBusy ? "503 Service Unavailable" : "500 Internal Server Error"
+                let code = isBusy ? 503 : 500
+                // Report the real cause. This used to say only "Inference failed",
+                // so "no model loaded" and "out of memory" were indistinguishable.
+                let message = (error as? LocalizedError)?.errorDescription
+                    ?? error.localizedDescription
+                let body = "{\"error\":{\"message\":\"\(message.jsonSafe)\",\"type\":\""
+                    + (isBusy ? "server_busy" : "server_error") + "\"}}"
+                sendRaw(connection: connection, status: status, contentType: "application/json", body: body)
+                RequestLogger.shared.log(method: "POST", path: path, statusCode: code)
                 return
             }
 
