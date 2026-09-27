@@ -55,7 +55,7 @@ public struct AdvancedSettingsView: View {
     private var computeSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("METAL GPU & NEURAL ENGINE")
+                Text("METAL GPU ACCELERATOR")
                     .font(.system(size: 9, weight: .black, design: .monospaced))
                     .foregroundColor(PocketTheme.textMuted)
                 Spacer()
