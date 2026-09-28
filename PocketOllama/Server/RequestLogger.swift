@@ -83,10 +83,10 @@ public final class RequestLogger: ObservableObject, @unchecked Sendable {
         guard let connection else { return "unknown" }
         switch connection.endpoint {
         case let .hostPort(host, port):
-            let raw = NWEndpoint.Host.debugDescription(host)
-            // debugDescription renders as "192.168.1.5" or "host 192.168.1.5".
-            let ip = raw.contains(" ") ? raw.split(separator: " ").last.map(String.init) ?? raw : raw
-            return "\(ip):\(NWEndpoint.Port.debugDescription(port))"
+            // Host and Port are both CustomStringConvertible; NWEndpoint.Host has
+            // no static debugDescription, and its instance description is already
+            // the bare address rather than a debug rendering.
+            return "\(host):\(port)"
         case let .service(name, _, _, _):
             return "service:\(name)"
         default:
