@@ -25,7 +25,9 @@ public struct LogEntry: Identifiable, Sendable {
     }()
 
     public var summary: String {
-        var base = "[\(formattedTime)] \(method) \(path) -> \(statusCode)"
+        // clientIP was recorded on every row but never rendered, so the log gave
+        // no way to tell which device made a request.
+        var base = "[\(formattedTime)] \(clientIP) \(method) \(path) -> \(statusCode)"
         if let tokens = tokensGenerated, let speed = tokensPerSecond {
             base += " (\(tokens) tok, \(String(format: "%.1f", speed)) t/s)"
         }
@@ -72,10 +74,24 @@ public final class RequestLogger: ObservableObject, @unchecked Sendable {
         }
     }
 
-    /// Real peer address for a connection, or nil when it cannot be determined.
+    /// Real peer address for a connection.
+    ///
+    /// This used to return `endpoint.debugDescription`, which is a debug
+    /// rendering (it embeds the endpoint's own state text) rather than an
+    /// address, and it was stored on every log row.
     public func clientIP(for connection: NWConnection?) -> String {
         guard let connection else { return "unknown" }
-        return connection.endpoint.debugDescription
+        switch connection.endpoint {
+        case let .hostPort(host, port):
+            let raw = NWEndpoint.Host.debugDescription(host)
+            // debugDescription renders as "192.168.1.5" or "host 192.168.1.5".
+            let ip = raw.contains(" ") ? raw.split(separator: " ").last.map(String.init) ?? raw : raw
+            return "\(ip):\(NWEndpoint.Port.debugDescription(port))"
+        case let .service(name, _, _, _):
+            return "service:\(name)"
+        default:
+            return "local"
+        }
     }
 
     public func clear() {

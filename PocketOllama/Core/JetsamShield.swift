@@ -2,10 +2,6 @@ import Foundation
 
 public struct MemoryBudgetResult: Sendable {
     public let isSafe: Bool
-    public let availableRAMBytes: UInt64
-    public let requiredRAMBytes: UInt64
-    public let safeMaxContextTokens: Int
-    public let suggestedKVQuant: String
     public let errorMessage: String?
 }
 
@@ -30,13 +26,10 @@ public final class JetsamShield: @unchecked Sendable {
         let bytesPerToken = Self.estimatedBytesPerToken(profile: hw, kvQuant: kvQuant)
         let kvCacheBytes = UInt64(Double(requestedContextTokens) * bytesPerToken)
 
+        // totalRequired already includes the model, the KV cache and the margin,
+        // so the second clause is the binding one.
         let totalRequired = modelFileSizeBytes + kvCacheBytes + safetyMarginBytes
-        let isSafe = availableRAM > (modelFileSizeBytes + safetyMarginBytes) && availableRAM > totalRequired
-
-        let availableForKV = availableRAM > (modelFileSizeBytes + safetyMarginBytes)
-            ? (availableRAM - modelFileSizeBytes - safetyMarginBytes)
-            : 0
-        let maxSafeTokens = Int(Double(availableForKV) / bytesPerToken)
+        let isSafe = availableRAM > totalRequired
 
         let errorMsg: String? = isSafe ? nil :
             "Insufficient memory: model needs \(modelFileSizeBytes / (1024 * 1024)) MB plus "
@@ -44,14 +37,7 @@ public final class JetsamShield: @unchecked Sendable {
             + "but only \(availableRAM / (1024 * 1024)) MB is available. "
             + "Try a smaller model or a shorter context."
 
-        return MemoryBudgetResult(
-            isSafe: isSafe,
-            availableRAMBytes: availableRAM,
-            requiredRAMBytes: totalRequired,
-            safeMaxContextTokens: max(1024, (maxSafeTokens / 1024) * 1024),
-            suggestedKVQuant: (availableRAM < 4 * 1024 * 1024 * 1024) ? "q4_0" : "q8_0",
-            errorMessage: errorMsg
-        )
+        return MemoryBudgetResult(isSafe: isSafe, errorMessage: errorMsg)
     }
 
     /// Planning estimate used before the model is loaded and its real dimensions
@@ -70,22 +56,5 @@ public final class JetsamShield: @unchecked Sendable {
             layerCount: layers, embeddingLength: embd,
             headCount: heads, headCountKV: kvHeads, kvQuant: kvQuant
         )
-    }
-
-    public func compactPromptMiddleOut(prompt: String, maxAllowedTokens: Int) -> (compactedPrompt: String, wasCompacted: Bool) {
-        let maxChars = maxAllowedTokens * 4
-        if prompt.count <= maxChars {
-            return (prompt, false)
-        }
-
-        let prefixLength = min(Int(Double(maxChars) * 0.25), prompt.count)
-        let suffixLength = min(Int(Double(maxChars) * 0.70), prompt.count)
-        guard prefixLength + suffixLength < prompt.count else {
-            return (String(prompt.suffix(maxChars)), true)
-        }
-
-        let prefix = String(prompt.prefix(prefixLength))
-        let suffix = String(prompt.suffix(suffixLength))
-        return ("\(prefix)\n\n[... Context compacted by Middle-Out Shield ...]\n\n\(suffix)", true)
     }
 }
