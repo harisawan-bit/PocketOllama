@@ -41,7 +41,7 @@ jobs:
 
       - name: Self-check the non-obvious inference logic
         run: |
-          swiftc -O PocketOllama/Inference/PromptCompaction.swift PocketOllama/Core/ContextSizing.swift PocketOllama/Core/ModelBudget.swift PocketOllama/Core/DownloaderValidation.swift Scripts/LogicSelfCheck.swift -o "$RUNNER_TEMP/po-check"
+          swiftc -O PocketOllama/Inference/PromptCompaction.swift PocketOllama/Core/ContextSizing.swift PocketOllama/Core/ModelBudget.swift PocketOllama/Core/DownloaderValidation.swift PocketOllama/Server/HttpFraming.swift Scripts/LogicSelfCheck.swift -o "$RUNNER_TEMP/po-check"
           "$RUNNER_TEMP/po-check"
 
       - name: Build (unsigned)

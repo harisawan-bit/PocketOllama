@@ -160,9 +160,11 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
             // Only handle chunked bodies that fully arrived; otherwise keep reading.
             let raw = data[bodyStart...]
             guard let terminator = raw.range(of: Data("0\r\n\r\n".utf8)) else { return nil }
-            body = decodeChunked(raw[..<terminator.lowerBound])
+            body = HttpFraming.decodeChunked(raw[..<terminator.lowerBound])
         } else {
             guard contentLength >= 0, contentLength <= maxBytes else { return nil }
+            // Int() above can yield a negative from a malformed value; keep the
+            // slice arithmetic below provably in range.
             guard available >= contentLength else { return nil }
             body = data[bodyStart..<(bodyStart + contentLength)]
         }
@@ -180,22 +182,7 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
                            body: Data(body), authorization: authorization)
     }
 
-    private static func decodeChunked(_ raw: Data) -> Data {
-        var out = Data()
-        var cursor = raw.startIndex
-        while cursor < raw.endIndex {
-            guard let lineEnd = raw[cursor...].range(of: Data("\r\n".utf8)) else { break }
-            let sizeField = String(data: raw[cursor..<lineEnd.lowerBound], encoding: .utf8) ?? ""
-            let size = Int(sizeField.split(separator: ";").first.map(String.init) ?? "", radix: 16) ?? 0
-            if size == 0 { break }
-            let chunkStart = lineEnd.upperBound
-            let chunkEnd = chunkStart + size
-            guard chunkEnd <= raw.endIndex else { break }
-            out.append(raw[chunkStart..<chunkEnd])
-            cursor = chunkEnd + 2
-        }
-        return out
-    }
+
 
     private func route(_ request: HTTPRequest, connection: NWConnection?) async {
         let path = request.path

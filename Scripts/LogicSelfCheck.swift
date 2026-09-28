@@ -178,6 +178,38 @@ struct LogicSelfCheck {
         check("empty stop tokens never match",
               StopMatching.match("anything", stopTokens: ["", "  "]) == nil)
 
+        print("HTTP chunked framing")
+        func chunked(_ s: String) -> Data { Data(s.utf8) }
+        check("decodes a normal two-chunk body",
+              String(data: HttpFraming.decodeChunked(chunked("4\r\nWiki\r\n5\r\npedia\r\n")), encoding: .utf8) == "Wikipedia")
+        check("strips chunk extensions",
+              String(data: HttpFraming.decodeChunked(chunked("4;name=v\r\nWiki\r\n")), encoding: .utf8) == "Wiki")
+        check("accepts uppercase hex",
+              String(data: HttpFraming.decodeChunked(chunked("A\r\n0123456789\r\n")), encoding: .utf8) == "0123456789")
+        // The crash: a size of exactly Int64.max parses, and the old code added it
+        // to the cursor unchecked, which traps in Swift.
+        let overflowSize = String(Int64.max, radix: 16)
+        check("Int64.max size is refused, not added",
+              HttpFraming.decodeChunked(chunked("\(overflowSize)\r\nAAAA\r\n")).isEmpty)
+        check("a size past Int64.max is refused",
+              HttpFraming.decodeChunked(chunked("FFFFFFFFFFFFFFFF\r\nAAAA\r\n")).isEmpty)
+        check("a huge but valid size is refused",
+              HttpFraming.decodeChunked(chunked("7FFFFFF\r\nAAAA\r\n")).isEmpty)
+        check("a size larger than the payload stops cleanly",
+              HttpFraming.decodeChunked(chunked("FF\r\nshort\r\n")).isEmpty)
+        check("garbage size is refused",
+              HttpFraming.decodeChunked(chunked("zz\r\nAAAA\r\n")).isEmpty)
+        check("negative size is refused",
+              HttpFraming.decodeChunked(chunked("-4\r\nAAAA\r\n")).isEmpty)
+        check("empty body is handled",
+              HttpFraming.decodeChunked(chunked("")).isEmpty)
+        check("truncated size line is handled",
+              HttpFraming.decodeChunked(chunked("4\r\n")).isEmpty)
+        check("body with no CRLF at all is handled",
+              HttpFraming.decodeChunked(chunked("garbage")).isEmpty)
+        check("decodes an empty chunked body",
+              HttpFraming.decodeChunked(chunked("0\r\n\r\n")).isEmpty)
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and
