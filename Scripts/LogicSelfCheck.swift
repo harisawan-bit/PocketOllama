@@ -210,6 +210,19 @@ struct LogicSelfCheck {
         check("decodes an empty chunked body",
               HttpFraming.decodeChunked(chunked("0\r\n\r\n")).isEmpty)
 
+        print("Download size parsing")
+        func bytes(_ s: String) -> UInt64 { DownloaderValidation.approximateBytes(forSizeDescription: s) }
+        let mb = 1024.0 * 1024.0
+        check("parses GB", abs(Double(bytes("4.92 GB")) - 4.92 * 1024 * mb) < 1)
+        check("parses MB", bytes("390 MB") == 390 * UInt64(mb))
+        check("parses lowercase", bytes("2.01 gb") == bytes("2.01 GB"))
+        check("assumes GB when the unit is missing", bytes("1.5") == bytes("1.5 GB"))
+        check("parses KB", bytes("512 KB") == 512 * 1024)
+        check("garbage yields zero", bytes("unknown") == 0)
+        check("empty yields zero", bytes("") == 0)
+        check("negative yields zero", bytes("-5 GB") == 0)
+        check("zero yields zero", bytes("0 GB") == 0)
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and

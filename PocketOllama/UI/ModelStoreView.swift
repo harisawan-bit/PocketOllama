@@ -23,7 +23,7 @@ public struct ModelStoreView: View {
             name: "DeepSeek-R1-Distill-1.5B (Q4_K_M)",
             sizeDescription: "1.12 GB",
             parameterSize: "1.5B",
-            recommendedContext: "Up to 64k Tokens",
+            recommendedContext: "Context set after download",
             downloadURL: "https://huggingface.co/unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF/resolve/main/DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf",
             filePath: nil,
             isDownloaded: false,
@@ -34,7 +34,7 @@ public struct ModelStoreView: View {
             name: "Qwen 2.5 0.5B Instruct (Q4_K_M)",
             sizeDescription: "390 MB",
             parameterSize: "0.5B",
-            recommendedContext: "Up to 128k - 256k Tokens",
+            recommendedContext: "Context set after download",
             downloadURL: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
             filePath: nil,
             isDownloaded: false,
@@ -45,7 +45,7 @@ public struct ModelStoreView: View {
             name: "Hermes 3 Llama-3.2 3B (Q4_K_M)",
             sizeDescription: "2.01 GB",
             parameterSize: "3.2B",
-            recommendedContext: "Up to 32k Tokens",
+            recommendedContext: "Context set after download",
             downloadURL: "https://huggingface.co/NousResearch/Hermes-3-Llama-3.2-3B-GGUF/resolve/main/Hermes-3-Llama-3.2-3B.Q4_K_M.gguf",
             filePath: nil,
             isDownloaded: false,
@@ -56,7 +56,7 @@ public struct ModelStoreView: View {
             name: "Hermes 3 Llama-3.1 8B (Q4_K_M)",
             sizeDescription: "4.92 GB",
             parameterSize: "8.0B",
-            recommendedContext: "Up to 16k Tokens",
+            recommendedContext: "Context set after download",
             downloadURL: "https://huggingface.co/NousResearch/Hermes-3-Llama-3.1-8B-GGUF/resolve/main/Hermes-3-Llama-3.1-8B.Q4_K_M.gguf",
             filePath: nil,
             isDownloaded: false,
@@ -181,7 +181,13 @@ public struct ModelStoreView: View {
                             .foregroundColor(PocketTheme.devCyan)
                         Text("•")
                             .foregroundColor(PocketTheme.textMuted)
-                        Text(item.recommendedContext)
+                        // Show the context the app will actually give this model on this
+            // device, not a hardcoded number. The hardcoded rows claimed up to
+            // 256k for a model the budget code will not exceed its trained
+            // context for, and which will not fit in a phone's RAM anyway.
+            Text(item.filePath == nil
+                 ? item.recommendedContext
+                 : "Up to \(config.recommendedContextTokens.formatted()) tokens on this device")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundColor(PocketTheme.terminalGreen)
                     }
@@ -261,9 +267,7 @@ public struct ModelStoreView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 Button {
                                     downloader.clearDownload(modelId: item.id)
-                                    if let url = item.downloadURL {
-                                        downloader.startDownload(modelId: item.id, urlString: url)
-                                    }
+                                    beginDownload(item)
                                 } label: {
                                     HStack(spacing: 4) {
                                         Image(systemName: "arrow.clockwise")
@@ -276,7 +280,7 @@ public struct ModelStoreView: View {
                         } else {
                         Button(action: {
                             if let url = item.downloadURL {
-                                downloader.startDownload(modelId: item.id, urlString: url)
+                                beginDownload(item)
                             }
                         }) {
                             HStack(spacing: 4) {
@@ -328,6 +332,26 @@ public struct ModelStoreView: View {
             .padding(12)
             .devCard(cornerRadius: 8)
         }
+    }
+
+
+    /// Refuses to start a download the device has no room for, and reports the
+    /// real failure rather than letting it die partway through.
+    private func beginDownload(_ item: LocalModelItem) {
+        guard let url = item.downloadURL else { return }
+        let needed = ModelDownloader.approximateBytes(forSizeDescription: item.sizeDescription)
+        let free = ModelDownloader.availableDiskBytes()
+        // Leave headroom: iOS needs scratch space, and the KV cache competes for
+        // what is left once the model is memory-mapped.
+        let required = UInt64(Double(needed) * 1.15)
+        if free > 0, required > free {
+            downloader.reportDownloadFailure(
+                modelId: item.id,
+                message: "Not enough free space: needs \(ModelDownloader.formatBytes(required)), "
+                       + "\(ModelDownloader.formatBytes(free)) available.")
+            return
+        }
+        downloader.startDownload(modelId: item.id, urlString: url)
     }
 
     private func scanModelsOnDisk() {

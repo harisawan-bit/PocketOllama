@@ -22,6 +22,17 @@ public enum DownloaderValidation {
         return isGGUF(magic: [UInt8](magic))
     }
 
+    /// Rough byte count from a displayed size such as "1.12 GB" or "390 MB".
+    /// Used to refuse a download the device has no room for.
+    public static func approximateBytes(forSizeDescription text: String) -> UInt64 {
+        let parts = text.lowercased().split(separator: " ").map(String.init)
+        guard let value = Double(parts.first ?? "0"), value > 0 else { return 0 }
+        let unit = parts.count > 1 ? parts[1] : "gb"
+        let multiplier: Double = unit.hasPrefix("mb") ? 1024 * 1024
+            : (unit.hasPrefix("kb") ? 1024 : 1024.0 * 1024 * 1024)
+        return UInt64(value * multiplier)
+    }
+
     /// A modelId is used directly as a filename, so path separators and traversal
     /// are removed. The ids are internally generated today, but the destination is
     /// a filesystem path and this is a trust boundary.

@@ -275,6 +275,40 @@ public final class ModelDownloader: NSObject, ObservableObject, URLSessionDownlo
         return elapsed > 0 ? Double(bytes) / elapsed : 0
     }
 
+    /// Surface a refusal on the row so the user sees why nothing started.
+    public func reportDownloadFailure(modelId: String, message: String) {
+        publishFailure(modelId: modelId, message: message)
+    }
+
+    /// Free space on the volume holding the models directory. Returns 0 when it
+    /// cannot be determined, which callers treat as "do not block".
+    public static func availableDiskBytes() -> UInt64 {
+        // Documents, not the instance helper: this is static so the store can call
+        // it before any download exists.
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let values = try? docs.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        if let cap = values?.volumeAvailableCapacityForImportantUsage, cap > 0 {
+            return UInt64(cap)
+        }
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: docs.path),
+           let free = attrs[.systemFreeSize] as? NSNumber {
+            return free.uint64Value
+        }
+        return 0
+    }
+
+    /// Delegates to the shared, CI-tested implementation.
+    public static func approximateBytes(forSizeDescription text: String) -> UInt64 {
+        DownloaderValidation.approximateBytes(forSizeDescription: text)
+    }
+
+
+    public static func formatBytes(_ bytes: UInt64) -> String {
+        let gb = Double(bytes) / (1024.0 * 1024.0 * 1024.0)
+        if gb >= 1 { return String(format: "%.1f GB", gb) }
+        return String(format: "%.0f MB", Double(bytes) / (1024.0 * 1024.0))
+    }
+
     public func getModelsDirectory() -> URL {
         let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
         let modelsDir = paths[0].appendingPathComponent("models")
