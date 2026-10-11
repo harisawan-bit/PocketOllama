@@ -536,6 +536,103 @@ print("Speculative decoding")
         check("not worthwhile with no context",
               !NGramDrafting.isWorthwhile(contextTokens: 0))
 
+        print("Prefix cache")
+        // Longest common prefix.
+        check("identical sequences share everything",
+              PrefixCache.commonPrefixLength([1,2,3], [1,2,3]) == 3)
+        check("disjoint sequences share nothing",
+              PrefixCache.commonPrefixLength([1,2], [9,8]) == 0)
+        check("empty shares nothing", PrefixCache.commonPrefixLength([], [1,2]) == 0)
+        check("prefix of different lengths",
+              PrefixCache.commonPrefixLength([1,2,3,4], [1,2]) == 2)
+        check("divergence at the first token",
+              PrefixCache.commonPrefixLength([1,2,3], [0,2,3]) == 0)
+        check("divergence in the middle",
+              PrefixCache.commonPrefixLength([1,2,3,4], [1,2,9,9]) == 2)
+
+        // Prefill accounting. The completion from the previous turn is part of the
+        // cacheable history, because it was decoded into the same KV cache.
+        let sysTokens = Array(100..<220)                       // 120
+        let turn1User = Array(300..<345)                       // 45
+        let turn1Asst = Array(400..<445)                       // 45
+        let turn2User = Array(500..<545)
+        let prompt2 = sysTokens + turn1User + turn1Asst + turn2User
+
+        check("second turn prefills only the new turn",
+              PrefixCache.tokensToPrefill(previousPrompt: sysTokens + turn1User + turn1Asst,
+                                          previousCompletion: [],
+                                          newPrompt: prompt2) == turn2User.count)
+        check("reusable count is the rest",
+              PrefixCache.reusableTokenCount(previousPrompt: sysTokens + turn1User + turn1Asst,
+                                             previousCompletion: [],
+                                             newPrompt: prompt2) == prompt2.count - turn2User.count)
+
+        // Passing the completion means it is NOT re-prefilled.
+        let turn2Asst = Array(700..<745)
+        let turn3User = Array(800..<840)
+        let prompt3 = prompt2 + turn2Asst + turn3User
+        let withCompletion = PrefixCache.tokensToPrefill(previousPrompt: prompt2,
+                                                         previousCompletion: turn2Asst,
+                                                         newPrompt: prompt3)
+        check("a cached completion is not re-prefilled",
+              withCompletion == turn3User.count)
+        // Omitting it costs the completion's tokens again. Both are legitimate
+        // calls; the contract is that the completion is passed one way, not both.
+        let withoutCompletion = PrefixCache.tokensToPrefill(previousPrompt: prompt2,
+                                                            previousCompletion: [],
+                                                            newPrompt: prompt3)
+        check("an omitted completion is re-prefilled",
+              withoutCompletion == turn2Asst.count + turn3User.count)
+
+        // An unrelated conversation reuses nothing.
+        let unrelated = Array(9000..<9100)
+        check("an unrelated prompt prefills everything",
+              PrefixCache.tokensToPrefill(previousPrompt: prompt2,
+                                          previousCompletion: turn2Asst,
+                                          newPrompt: unrelated) == unrelated.count)
+        check("an identical prompt prefills nothing",
+              PrefixCache.tokensToPrefill(previousPrompt: sysTokens,
+                                          previousCompletion: [],
+                                          newPrompt: sysTokens) == 0)
+        check("an empty cache prefills everything",
+              PrefixCache.tokensToPrefill(previousPrompt: [], previousCompletion: [],
+                                          newPrompt: sysTokens) == sysTokens.count)
+        check("an empty new prompt prefills nothing",
+              PrefixCache.tokensToPrefill(previousPrompt: sysTokens, previousCompletion: [],
+                                          newPrompt: []).count == 0)
+
+        // Savings reporting must agree with the accounting.
+        let s = PrefixCache.prefillSavings(previousPrompt: sysTokens + turn1User + turn1Asst,
+                                           previousCompletion: [],
+                                           newPrompt: prompt2)
+        check("savings split adds up", s.reused + s.prefilled == prompt2.count)
+
+        // Retention: a cached prefix that leaves no room for a reply is useless.
+        check("retains when it fits",
+              PrefixCache.shouldRetain(cachedTokens: 1000, contextTokens: 8192, reserveForReply: 1024))
+        check("drops when it exactly fills the context",
+              !PrefixCache.shouldRetain(cachedTokens: 8192, contextTokens: 8192, reserveForReply: 1024))
+        check("drops when it overflows", !PrefixCache.shouldRetain(cachedTokens: 9000,
+                                                                   contextTokens: 8192, reserveForReply: 1024))
+        check("retains at the exact boundary",
+              PrefixCache.shouldRetain(cachedTokens: 7168, contextTokens: 8192, reserveForReply: 1024))
+        check("a zero context retains nothing",
+              !PrefixCache.shouldRetain(cachedTokens: 0, contextTokens: 0, reserveForReply: 0))
+
+        // Trimming keeps both ends: the system prompt and the recent turns.
+        let long = Array(0..<1000)
+        let trimmed = PrefixCache.trim(cached: long, toFit: 100)
+        check("trim hits the target length", trimmed.count == 100)
+        check("trim keeps the head", trimmed.first == long.first)
+        check("trim keeps the tail", trimmed.last == long.last)
+        check("trim is a no-op under the limit", PrefixCache.trim(cached: long, toFit: 5000) == long)
+        check("trim to zero is empty", PrefixCache.trim(cached: long, toFit: 0).isEmpty)
+        check("trim to one keeps something", PrefixCache.trim(cached: long, toFit: 1).count == 1)
+        check("trim preserves order", {
+            let idx = trimmed.map { long.firstIndex(of: $0)! }
+            return idx.sorted() == idx
+        }())
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and
