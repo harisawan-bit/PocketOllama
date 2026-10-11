@@ -49,3 +49,20 @@ targets:
       - framework: Vendor/llama.xcframework
         embed: true
         codeSign: false
+
+  # Compile-only target. Verifies the exact Swift types of llama_batch's fields
+  # and the llama_memory_seq_* signatures against the real XCFramework, for iOS,
+  # with the working toolchain. Wiring the prefill logits fix means filling a
+  # llama_batch by hand and llama.h says llama_batch_init "leaves all members
+  # uninitialized", so a wrong pointer type would corrupt the KV cache silently.
+  #
+  # Separate from the app target because the app already declares @main, and a
+  # second @main in the same module is a duplicate-symbol error.
+  CIProbe:
+    type: tool
+    platform: iOS
+    deploymentTarget: "16.4"
+    sources:
+      - path: Scripts/CIProbe
+    dependencies:
+      - framework: Vendor/llama.xcframework
