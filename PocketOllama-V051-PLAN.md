@@ -405,6 +405,35 @@ sampler, and the app samples on CPU via `llama_sampler_*`. So
 `batch.logits[i] = 1` only for the final token of the final prefill chunk, and
 zero elsewhere. `llama_batch_free` on the way out.
 
+### The trap that makes this dangerous, verified from the source
+
+`llama.h` on `llama_batch_init` says: **"All members are left uninitialized."**
+
+That is not a style warning. Every field the app currently gets for free from
+`llama_batch_get_one` must be written by hand:
+
+| Field | `llama_batch_get_one` | Required with `llama_batch_init` |
+|---|---|---|
+| `token` | caller's pointer | must be filled per token |
+| `pos` | `nullptr`, auto-generated | **must be set**, or positions restart |
+| `n_seq_id` | `nullptr` -> defaults to 1 | must be set to 1 |
+| `seq_id` | `nullptr` -> defaults to 0 | must point at seq id 0 |
+| `logits` | `nullptr` -> last token only | must be set explicitly |
+
+From `llama-batch.cpp:1258-1291`, the `nullptr` defaults are what make
+`get_one` safe: `default_seq_id = 0`, `default_n_seq_id = 1`, and when `pos` is
+null the position is auto-generated as `llama_memory_seq_pos_max(mem, s) + 1`.
+
+So the safe migration is: leave `pos`, `n_seq_id` and `seq_id` as the null
+pointers `llama_batch_init` gives, and set **only** `token` and `logits`. Setting
+`pos` by hand while also letting memory auto-advance would double-count positions
+and corrupt the KV cache in a way that produces plausible-looking but wrong
+output, which is the worst failure mode available.
+
+That is why this is documented rather than patched blind: the compile cannot
+catch an uninitialised `pos`, and the symptom is silent corruption rather than a
+crash.
+
 **Not fixed yet, and deliberately.** This touches the prefill loop, which is the
 one path where a mistake silently corrupts every prompt. It cannot be compile-
 verified for correctness, only for syntax, and the win is unmeasured.
