@@ -427,6 +427,112 @@ print("Speculative decoding")
               !SpeculativeDecoding.isWorthwhile(freeRAMBytes: 0,
                                                 targetModelBytes: big, draftModelBytes: small))
 
+        print("n-gram drafting")
+        func buildCache(_ tokens: [Int]) -> NGramDrafting.Cache {
+            var c = NGramDrafting.Cache()
+            NGramDrafting.update(&c, generated: tokens, newTokenCount: tokens.count)
+            return c
+        }
+
+        // Thresholds must be upstream's, and the two tables are different
+        // quantities. An earlier draft used {66,50,50,50} for both, which demanded
+        // 50 sightings of a 1-gram and therefore never drafted anything.
+        check("lax sample sizes are counts, not percents",
+              NGramDrafting.minSampleSizeLax == [2, 3, 3, 4])
+        check("lax percents are shares",
+              NGramDrafting.minPercentLax == [66, 50, 50, 50])
+        check("strict sample sizes are counts",
+              NGramDrafting.minSampleSizeStrict == [4, 3, 2, 2])
+        check("strict percents are shares",
+              NGramDrafting.minPercentStrict == [75, 66, 66, 66])
+
+        // The threshold rule itself.
+        check("passes with enough samples and a clear winner",
+              NGramDrafting.passesThreshold(count: 6, total: 6, minSampleSize: 3, minPercent: 50))
+        check("fails below the sample floor",
+              !NGramDrafting.passesThreshold(count: 1, total: 1, minSampleSize: 3, minPercent: 50))
+        check("fails on a split history",
+              !NGramDrafting.passesThreshold(count: 1, total: 2, minSampleSize: 1, minPercent: 66))
+        check("fails on zero total",
+              !NGramDrafting.passesThreshold(count: 0, total: 0, minSampleSize: 1, minPercent: 1))
+        check("exactly at the percent floor passes",
+              NGramDrafting.passesThreshold(count: 2, total: 3, minSampleSize: 2, minPercent: 66))
+
+        // Cache building.
+        let c5 = buildCache([5,6,7,8, 5,6,7,8, 5,6])
+        check("counts are recorded",
+              NGramDrafting.bestFollower(c5[NGramDrafting.NGramKey([5])])?.token == 6)
+        check("a missing key yields nothing",
+              NGramDrafting.bestFollower(c5[NGramDrafting.NGramKey([999])]) == nil)
+        check("an empty cache yields nothing",
+              NGramDrafting.bestFollower(nil) == nil)
+
+        // Drafting behaviour, each expectation verified against a reference
+        // implementation of the upstream algorithm before being written here.
+        check("a strong repeat drafts the continuation",
+              NGramDrafting.draft(generated: ([1,2,3,9]*6) + [1,2,3], alreadyDrafted: [],
+                                  cache: buildCache(([1,2,3,9]*6) + [1,2,3]), maxDraft: 4) == [9, 1, 2, 3])
+        check("a single sighting does not draft",
+              NGramDrafting.draft(generated: [1,2,3,4,5,6,1,2,3], alreadyDrafted: [],
+                                  cache: buildCache([1,2,3,4,5,6,1,2,3]), maxDraft: 4).isEmpty)
+        check("no repetition drafts nothing",
+              NGramDrafting.draft(generated: Array(0..<20), alreadyDrafted: [],
+                                  cache: buildCache(Array(0..<20)), maxDraft: 4).isEmpty)
+        check("a split history does not draft",
+              NGramDrafting.draft(generated: [7,8,100,7,8,200,7,8], alreadyDrafted: [],
+                                  cache: buildCache([7,8,100,7,8,200,7,8]), maxDraft: 4).isEmpty)
+        check("a strong 1-gram drafts",
+              NGramDrafting.draft(generated: [5,6,7,8,5,6,7,8,5,6], alreadyDrafted: [],
+                                  cache: buildCache([5,6,7,8,5,6,7,8,5,6]), maxDraft: 3) == [7, 8, 5])
+        check("the longest match wins",
+              NGramDrafting.draft(generated: [1,2,3,50,1,2,3,50,1,2,3], alreadyDrafted: [],
+                                  cache: buildCache([1,2,3,50,1,2,3,50,1,2,3]), maxDraft: 2) == [50, 1])
+
+        // Guards.
+        check("zero max draft returns empty",
+              NGramDrafting.draft(generated: [1,2,3,9,1,2,3], alreadyDrafted: [],
+                                  cache: buildCache([1,2,3,9,1,2,3]), maxDraft: 0).isEmpty)
+        check("too little context returns empty",
+              NGramDrafting.draft(generated: [1], alreadyDrafted: [],
+                                  cache: buildCache([1]), maxDraft: 4).isEmpty)
+        check("draft never exceeds the cap",
+              NGramDrafting.draft(generated: ([1,2]*40), alreadyDrafted: [],
+                                  cache: buildCache([1,2]*40), maxDraft: 5).count <= 5)
+        check("update with zero new tokens is a no-op", {
+            var c = NGramDrafting.Cache()
+            NGramDrafting.update(&c, generated: [1,2,3], newTokenCount: 0)
+            return c.count == 0
+        }())
+        check("update with more tokens than exist is safe", {
+            var c = NGramDrafting.Cache()
+            NGramDrafting.update(&c, generated: [1,2,3], newTokenCount: 99)
+            return c.count >= 0
+        }())
+
+        // n-gram keys: different lengths must not collide.
+        check("keys of different length differ",
+              NGramDrafting.NGramKey([1,2]) != NGramDrafting.NGramKey([1,2,3]))
+        check("equal keys compare equal",
+              NGramDrafting.NGramKey([1,2]) == NGramDrafting.NGramKey([1,2]))
+
+        // Throughput model, same closed form as the draft-model case.
+        check("perfect acceptance yields k+1",
+              Self.approx(NGramDrafting.expectedTokensPerPass(acceptanceRate: 1.0, draftsPerRound: 4), 5.0))
+        check("zero acceptance yields 1",
+              Self.approx(NGramDrafting.expectedTokensPerPass(acceptanceRate: 0.0, draftsPerRound: 4), 1.0))
+        check("k=0 degenerates to 1",
+              NGramDrafting.expectedTokensPerPass(acceptanceRate: 0.9, draftsPerRound: 0) == 1)
+        check("upstream's 0.58 acceptance still helps",
+              NGramDrafting.expectedTokensPerPass(acceptanceRate: 0.58, draftsPerRound: 8) > 2.0)
+
+        // Worthwhileness is a correctness gate, not a memory one: this technique
+        // allocates nothing beyond the counts, so it works where a draft model
+        // cannot fit at all.
+        check("worthwhile with a minimal context",
+              NGramDrafting.isWorthwhile(contextTokens: NGramDrafting.minimumContextTokens))
+        check("not worthwhile with no context",
+              !NGramDrafting.isWorthwhile(contextTokens: 0))
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and
