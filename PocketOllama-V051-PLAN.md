@@ -219,7 +219,8 @@ single phone can hold. Report aggregate capacity and per-peer utilisation.
 
 ### Phase 5 - opportunistic / niche (each needs its own feasibility check)
 
-- **Speculative decoding.** A small draft model on the coordinator, verified by
+- **Speculative decoding (IMPLEMENTABLE NOW, no custom build).**
+ A small draft model on the coordinator, verified by
   the large model. Real speedup, no network needed. Best value-per-risk item
   after Phase 0.
 - **RDMA over Thunderbolt.** Per Apple TN3205 it exists, but macOS 26.2+ and
@@ -231,6 +232,51 @@ single phone can hold. Report aggregate capacity and per-peer utilisation.
 - **AirComp.** Research only. Documented, not implemented.
 
 ---
+
+## 6b. Speculative decoding: verified implementable with the shipped framework
+
+This changes the recommendation. I initially suggested speculative decoding
+without checking, then verified it properly.
+
+**It is not in the public `llama.h`.** There is no `llama_speculative_*` symbol.
+The 20 sampler initialisers are the whole list, and none of them draft.
+
+**But `examples/speculative/speculative.cpp` (668 lines) builds it from public API
+only.** Every `llama_*` call it makes exists in the shipped XCFramework:
+`llama_decode`, `llama_batch_get_one`, `llama_batch_init`, `llama_batch_free`,
+`llama_memory_seq_cp`, `llama_memory_seq_keep`, `llama_memory_seq_rm`,
+`llama_get_memory`, `llama_n_batch`, `llama_n_ctx`, `llama_vocab_is_eog`.
+
+I confirmed all of these against the pinned `llama.h`. So speculative decoding
+needs **no RPC and no custom framework build**. It works on a single phone with
+the dependency already in the app.
+
+**The algorithm, verified from the source.** Draft K tokens with a small model,
+then verify them with the target model in one forward pass. Accept each draft
+token by rejection sampling:
+
+```
+r = uniform(0, 1)
+accept if  r <= p_tgt / p_dft
+```
+
+where `p_tgt` is the target model's probability for the drafted token and
+`p_dft` is the draft model's. On rejection, fall back to the target model's own
+distribution for that position. This is the standard speculative-sampling
+guarantee: the output distribution is **identical** to the target model alone.
+It is a speed optimisation, not a quality trade-off.
+
+Draft and target share one context, kept separate by sequence id, which is what
+`llama_memory_seq_cp` / `seq_keep` / `seq_rm` are for. That is the only genuinely
+delicate part: sequence bookkeeping must be exact or the KV cache corrupts.
+
+**Practical note for iOS.** It needs two models resident, so it only pays off
+where the draft model is much smaller than the target. On an 8 GB phone that
+means something like a 0.5B draft against an 8B target. On a 2 GB phone it is not
+worth attempting.
+
+This is now the highest-value item that can actually be verified from this
+environment, and it directly serves "make this app very good".
 
 ## 7. Status and what I need
 
@@ -244,6 +290,8 @@ the CI job, but I cannot compile or verify them, so I will not claim they work.
 
 1. Do you want me to write the Phase 1 build script and CI job for you to run on
    a Mac, clearly labelled as unverified?
-2. Or should I implement **speculative decoding** instead, which needs no custom
-   framework build, works on a single phone, and is the highest-value item I can
-   actually verify from here?
+2. Or should I implement **speculative decoding**? I have now verified it needs
+   no custom framework build and no RPC, uses only public `llama.h` API already
+   present in the shipped XCFramework, and produces output statistically
+   identical to the target model. It is the highest-value item I can actually
+   verify from here, and it needs no Mac.
