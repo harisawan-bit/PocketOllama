@@ -364,6 +364,57 @@ documented rather than discovered later.
 3. **Draft-model speculative decoding** (done, arithmetic) - needs a Mac to tune
 4. **RPC clustering** - blocked on macOS, needs a custom framework build
 
+## 6e. Wasted logits during prefill: a verified code-path defect (NOT YET FIXED)
+
+Found by reading the pinned llama.cpp source, not a blog.
+
+`llama.h` marks `llama_batch_get_one` with: *"a helper function to facilitate
+transition to the new batch API - **avoid using it**."* The app calls it in both
+the prefill loop and the decode loop.
+
+I first suspected it allocated a heap batch per token. **It does not** — reading
+`src/llama-batch.cpp:966` shows it is a plain struct initializer returning null
+pointers. That hypothesis was wrong and is recorded here as refuted.
+
+**The real defect is what those null pointers mean.** From
+`src/llama-batch.cpp:1308-1311`:
+
+    // if no logits array is given, default to only the last token being an output
+    t.output = batch_inp.logits
+        ? (batch_inp.logits[i] != 0)
+        : (i == batch_inp.n_tokens - 1);
+
+With `logits == nullptr`, **every** batch marks its last token as an output. The
+app prefills in chunks of `n_ubatch` (floor 512), so each chunk runs the full
+`n_vocab` output projection for one token and copies `n_vocab` floats from the
+Metal device to the CPU — then discards it, because only the final chunk's
+output is ever read.
+
+| Prompt | Prefill chunks | Wasted projections + copies |
+|---|---|---|
+| 2048 tok | 4 | 3 |
+| 4096 tok | 8 | 7 |
+| 8192 tok | 16 | 15 |
+
+The copy path is confirmed reachable: `needs_raw_logits()`
+(`llama-context.cpp:1688`) returns true whenever a sequence has no *backend*
+sampler, and the app samples on CPU via `llama_sampler_*`. So
+`ggml_backend_tensor_get_async` really does move the whole logits tensor.
+
+**The fix** is the documented modern API: `llama_batch_init`, then set
+`batch.logits[i] = 1` only for the final token of the final prefill chunk, and
+zero elsewhere. `llama_batch_free` on the way out.
+
+**Not fixed yet, and deliberately.** This touches the prefill loop, which is the
+one path where a mistake silently corrupts every prompt. It cannot be compile-
+verified for correctness, only for syntax, and the win is unmeasured.
+
+**Honest sizing.** Prefill is measured at ~850 tok/s, so the wasted projections
+are a small fraction of prefill time. The larger risk is the per-chunk device-to-
+host synchronisation stalling the Metal pipeline, which is real but not
+quantifiable from here. This is a code-path analysis, **not a benchmark**, and
+the win is unknown until measured on the phone.
+
 ## 7. Status and what I need
 
 **Done and verified:** Phase 0, pushed to `main`, CI green (run 38130323741).
