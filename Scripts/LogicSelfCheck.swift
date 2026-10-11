@@ -428,6 +428,9 @@ print("Speculative decoding")
                                                 targetModelBytes: big, draftModelBytes: small))
 
         print("n-gram drafting")
+        func tiled(_ pattern: [Int], _ times: Int) -> [Int] {
+            Array(ArraySlice(repeating: pattern, count: times).joined())
+        }
         func buildCache(_ tokens: [Int]) -> NGramDrafting.Cache {
             var c = NGramDrafting.Cache()
             NGramDrafting.update(&c, generated: tokens, newTokenCount: tokens.count)
@@ -470,8 +473,8 @@ print("Speculative decoding")
         // Drafting behaviour, each expectation verified against a reference
         // implementation of the upstream algorithm before being written here.
         check("a strong repeat drafts the continuation",
-              NGramDrafting.draft(generated: ([1,2,3,9]*6) + [1,2,3], alreadyDrafted: [],
-                                  cache: buildCache(([1,2,3,9]*6) + [1,2,3]), maxDraft: 4) == [9, 1, 2, 3])
+              NGramDrafting.draft(generated: tiled([1,2,3,9], 6) + [1,2,3], alreadyDrafted: [],
+                                  cache: buildCache(tiled([1,2,3,9], 6) + [1,2,3]), maxDraft: 4) == [9, 1, 2, 3])
         check("a single sighting does not draft",
               NGramDrafting.draft(generated: [1,2,3,4,5,6,1,2,3], alreadyDrafted: [],
                                   cache: buildCache([1,2,3,4,5,6,1,2,3]), maxDraft: 4).isEmpty)
@@ -496,8 +499,8 @@ print("Speculative decoding")
               NGramDrafting.draft(generated: [1], alreadyDrafted: [],
                                   cache: buildCache([1]), maxDraft: 4).isEmpty)
         check("draft never exceeds the cap",
-              NGramDrafting.draft(generated: ([1,2]*40), alreadyDrafted: [],
-                                  cache: buildCache([1,2]*40), maxDraft: 5).count <= 5)
+              NGramDrafting.draft(generated: tiled([1,2], 40), alreadyDrafted: [],
+                                  cache: buildCachetiled([1,2], 40), maxDraft: 5).count <= 5)
         check("update with zero new tokens is a no-op", {
             var c = NGramDrafting.Cache()
             NGramDrafting.update(&c, generated: [1,2,3], newTokenCount: 0)
