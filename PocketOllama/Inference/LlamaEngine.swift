@@ -376,6 +376,7 @@ public actor LlamaEngine {
         // Allocated once. These were rebuilt on every single token, which is a
         // heap allocation per token for the lifetime of a generation.
         var pieceBuf = [UInt8](repeating: 0, count: 256)
+        var pieceBufCount = 0
 
         while produced < config.maxTokens {
             if Task.isCancelled || cancelRequested {
@@ -391,13 +392,38 @@ public actor LlamaEngine {
 
             // Decode straight into the reusable buffer. The previous form also
             // allocated a second array per token to convert CChar to UInt8.
+            //
+            // llama_token_to_piece returns a NEGATIVE count when the buffer was
+            // too small, and the magnitude is the size that would have been
+            // needed. Treating that as "empty" silently discarded the token,
+            // which showed up as intermittent empty answers: the text was
+            // generated, the token was dropped, and nothing reported it. On a
+            // negative return the buffer is grown and the call retried.
+            //
             // Only the length is taken from inside the exclusive-access closure;
             // reading the slice there would be an overlapping access.
             let pieceLen = pieceBuf.withUnsafeMutableBytes { raw -> Int in
                 guard let base = raw.baseAddress?.assumingMemoryBound(to: CChar.self) else { return 0 }
                 return Int(llama_token_to_piece(vocab, id, base, Int32(raw.count), 0, false))
             }
-            let pieceBytes = pieceLen > 0 ? pieceBuf[0..<pieceLen] : ArraySlice<UInt8>()
+            if pieceLen < 0 {
+                // llama_token_to_piece returned a negative count whose magnitude is
+                // the size the buffer needed. Grow and retry using the shared rule,
+                // capped so a nonsense return cannot request a huge allocation.
+                let want = -min(pieceLen, Int.max - 8)
+                let needed = min(PieceBufferSizing.retryBufferSize(needed: want), 1 << 20)
+                guard needed > 0 else { continue }
+                pieceBuf = [UInt8](repeating: 0, count: needed)
+                let grown = pieceBuf.withUnsafeMutableBytes { raw -> Int in
+                    guard let base = raw.baseAddress?.assumingMemoryBound(to: CChar.self) else { return 0 }
+                    return Int(llama_token_to_piece(vocab, id, base, Int32(raw.count), 0, false))
+                }
+                guard grown > 0 else { continue }
+                pieceBufCount = grown
+            } else {
+                pieceBufCount = pieceLen
+            }
+            let pieceBytes = pieceBufCount > 0 ? pieceBuf[0..<pieceBufCount] : ArraySlice<UInt8>()
             // Byte-fallback BPE splits multi-byte characters across tokens, so the
             // tail of a piece may be an incomplete sequence. Hold it back until
             // the continuation token completes it.

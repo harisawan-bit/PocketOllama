@@ -293,6 +293,35 @@ struct LogicSelfCheck {
         check("negative is clamped, not rejected here",
               RequestValidation.clampMaxTokens(-5, contextTokens: 8192) >= 1)
 
+        print("Piece buffer sizing")
+        check("positive return emits",
+              PieceBufferSizing.action(forReturnValue: 12) == .emit(count: 12))
+        check("zero return skips",
+              PieceBufferSizing.action(forReturnValue: 0) == .skip)
+        // The bug: a negative return means the buffer was too small, and the
+        // magnitude is what was needed. It was treated as empty and the token
+        // silently vanished from the answer.
+        check("negative return grows and retries",
+              PieceBufferSizing.action(forReturnValue: -257) == .growAndRetry(needed: 257))
+        // -Int.min overflows and would trap the decode loop.
+        check("Int.min saturates instead of trapping",
+              PieceBufferSizing.action(forReturnValue: Int.min) == .growAndRetry(needed: Int.max))
+        check("retry size exceeds the need",
+              PieceBufferSizing.retryBufferSize(needed: 257) > 257)
+        check("retry size is never zero",
+              PieceBufferSizing.retryBufferSize(needed: 0) > 0)
+        // Every return the loop can see must produce a defined action.
+        for v in [Int.min, -4096, -257, -1, 0, 1, 256, 257, Int.max] {
+            let a = PieceBufferSizing.action(forReturnValue: v)
+            let ok: Bool
+            switch a {
+            case .emit(let c):     ok = c == v && c > 0
+            case .growAndRetry(let n): ok = n > 0
+            case .skip:            ok = (v == 0)
+            }
+            check("return \(v) yields a defined action", ok)
+        }
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and

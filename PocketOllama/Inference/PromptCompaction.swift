@@ -60,6 +60,40 @@ public struct PartialUTF8Decoder {
 }
 
 
+
+/// The piece-buffer sizing rule, isolated so CI can test it.
+///
+/// `llama_token_to_piece` returns the byte count on success, and a NEGATIVE count
+/// whose magnitude is the size the buffer needed. The decode loop treated any
+/// non-positive value as "nothing to emit", which silently discarded tokens whose
+/// piece exceeded the 256-byte buffer. That is what produced intermittent empty
+/// answers: the tokens were generated, dropped, and never reported.
+public enum PieceBufferSizing {
+    /// What the loop should do with a given return value.
+    public enum Action: Equatable {
+        case emit(count: Int)
+        case growAndRetry(needed: Int)
+        case skip
+    }
+
+    public static func action(forReturnValue value: Int) -> Action {
+        if value > 0 { return .emit(count: value) }
+        // -value traps when value is Int.min, which a nonsense return could be.
+        // Saturate instead of crashing the decode loop.
+        if value < 0 {
+            let needed = (value == Int.min) ? Int.max : -value
+            return .growAndRetry(needed: needed)
+        }
+        return .skip
+    }
+
+    /// Size for a retry: the reported need plus slack so a second call does not
+    /// come back needing exactly the same amount.
+    public static func retryBufferSize(needed: Int) -> Int {
+        max(needed + 8, 1)
+    }
+}
+
 /// Stop-sequence matching over the accumulated answer.
 ///
 /// Extracted so the CI self-check compiles the real implementation. The decode
