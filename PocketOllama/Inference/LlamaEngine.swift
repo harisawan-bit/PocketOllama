@@ -476,6 +476,9 @@ public actor LlamaEngine {
     
 
     private static func formatPrompt(_ prompt: String, model: OpaquePointer) -> String {
+        // "chatml" is a registered builtin template NAME, verified against the 54
+        // entries in src/llama-chat.cpp, so it is a correct fallback for a model
+        // that ships no template of its own.
         let template = llama_model_chat_template(model, nil).map { String(cString: $0) } ?? "chatml"
 
         var messages: [llama_chat_message] = []
@@ -530,12 +533,31 @@ public actor LlamaEngine {
         var bufSize = max(4096, prompt.utf8.count * 2 + 1024)
         var buf = [CChar](repeating: 0, count: bufSize)
         var needed = llama_chat_apply_template(template, messages, messages.count, true, &buf, Int32(bufSize))
-        if needed >= bufSize {
-            bufSize = Int(needed) + 1
+
+        // The header's contract: the return is the byte count on success, and a
+        // NEGATIVE number on failure whose magnitude is what would have been
+        // needed. The previous code only tested "needed >= bufSize", which is
+        // false for a negative, so a failure skipped the retry and returned the
+        // raw prompt with its role prefixes still attached.
+        if needed < 0 || needed >= bufSize {
+            // Saturating arithmetic: -Int.min traps, and a nonsense return must not
+            // drive a huge allocation.
+            let want = (needed < 0) ? Int(min(-needed, 1 << 20)) : Int(needed)
+            bufSize = max(want + 1, bufSize * 2)
             buf = [CChar](repeating: 0, count: bufSize)
             needed = llama_chat_apply_template(template, messages, messages.count, true, &buf, Int32(bufSize))
         }
-        return needed > 0 ? String(cString: buf) : prompt
+
+        // String(cString:) requires a NUL terminator. The API fills exactly
+        // `needed` bytes and does not add one, so when the count equals the buffer
+        // size the read ran past the end. Bound by the returned count instead.
+        guard needed > 0, needed <= bufSize else { return prompt }
+        let produced = buf.withUnsafeBufferPointer { p -> String in
+            guard let base = p.baseAddress else { return "" }
+            return String(decoding: UnsafeRawBufferPointer(start: base, count: needed)
+                            .bindMemory(to: UInt8.self), as: UTF8.self)
+        }
+        return produced
     }
 }
 
