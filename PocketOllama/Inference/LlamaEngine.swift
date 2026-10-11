@@ -539,10 +539,12 @@ public actor LlamaEngine {
         // needed. The previous code only tested "needed >= bufSize", which is
         // false for a negative, so a failure skipped the retry and returned the
         // raw prompt with its role prefixes still attached.
-        if needed < 0 || needed >= bufSize {
-            // Saturating arithmetic: -Int.min traps, and a nonsense return must not
-            // drive a huge allocation.
-            let want = (needed < 0) ? Int(min(-needed, 1 << 20)) : Int(needed)
+        if needed < 0 || Int(needed) >= bufSize {
+            // Saturating arithmetic: negating Int32.min traps, and a nonsense
+            // return must not drive a huge allocation.
+            let want = (needed < 0)
+                ? Int(min(-Int64(needed), 1 << 20))
+                : Int(needed)
             bufSize = max(want + 1, bufSize * 2)
             buf = [CChar](repeating: 0, count: bufSize)
             needed = llama_chat_apply_template(template, messages, messages.count, true, &buf, Int32(bufSize))
@@ -551,10 +553,11 @@ public actor LlamaEngine {
         // String(cString:) requires a NUL terminator. The API fills exactly
         // `needed` bytes and does not add one, so when the count equals the buffer
         // size the read ran past the end. Bound by the returned count instead.
-        guard needed > 0, needed <= bufSize else { return prompt }
+        guard needed > 0, Int(needed) <= bufSize else { return prompt }
+        let producedCount = Int(needed)
         let produced = buf.withUnsafeBufferPointer { p -> String in
             guard let base = p.baseAddress else { return "" }
-            return String(decoding: UnsafeRawBufferPointer(start: base, count: needed)
+            return String(decoding: UnsafeRawBufferPointer(start: base, count: producedCount)
                             .bindMemory(to: UInt8.self), as: UTF8.self)
         }
         return produced
