@@ -399,11 +399,15 @@ print("Speculative decoding")
               Self.approx(SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: 0.0, draftsPerRound: 4), 1.0))
         check("0.9 acceptance beats plain decoding",
               SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: 0.9, draftsPerRound: 4) > 3.0)
-        check("throughput rises monotonically with acceptance",
-              (0.5...0.9).allSatisfy { a in
-                  SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: a, draftsPerRound: 4)
-                    < SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: a + 0.05, draftsPerRound: 4)
-              })
+        var monotonic = true
+        var prev = SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: 0.0, draftsPerRound: 4)
+        for i in 1...18 {
+            let a = Float(i) * 0.05
+            let cur = SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: a, draftsPerRound: 4)
+            if cur < prev - 1e-4 { monotonic = false }
+            prev = cur
+        }
+        check("throughput rises monotonically with acceptance", monotonic)
         check("k=0 degenerates to 1 token",
               SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: 0.9, draftsPerRound: 0) == 1)
 
