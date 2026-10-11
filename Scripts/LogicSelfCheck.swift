@@ -35,7 +35,7 @@ struct LogicSelfCheck {
         if !condition { failures += 1 }
     }
 
-    static func sumsToOne(_ xs: [Float]) -> Bool { abs(xs.reduce(0, +)) < 1e-5 }
+    static func sumsToOne(_ xs: [Float]) -> Bool { abs(xs.reduce(Float(0), +) - 1.0) < 1e-5 }
     static func approx(_ a: Float, _ b: Float) -> Bool { abs(a - b) < 1e-4 }
 
     static func main() {
