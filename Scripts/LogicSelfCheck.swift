@@ -633,6 +633,92 @@ print("Speculative decoding")
             return idx.sorted() == idx
         }())
 
+        print("Prefill plan")
+        // Empty and invalid input must produce no chunk, because a zero-length
+        // chunk would ask the engine to decode nothing and then read logits that
+        // were never produced.
+        check("an empty prompt plans nothing", PrefillPlan.plan(totalTokens: 0, ubatch: 512).isEmpty)
+        check("a negative prompt plans nothing", PrefillPlan.plan(totalTokens: -5, ubatch: 512).isEmpty)
+        check("a zero ubatch plans nothing", PrefillPlan.plan(totalTokens: 100, ubatch: 0).isEmpty)
+        check("a negative ubatch plans nothing", PrefillPlan.plan(totalTokens: 100, ubatch: -1).isEmpty)
+
+        // Coverage must always add up to the prompt length.
+        for n in [1, 2, 511, 512, 513, 1023, 1024, 2048, 4097, 8192] {
+            let chunks = PrefillPlan.plan(totalTokens: n, ubatch: 512)
+            check("plan covers every token (n=\(n))", PrefillPlan.totalTokens(in: chunks) == n)
+            check("exactly one chunk wants logits (n=\(n))",
+                  PrefillPlan.logitsRequestCount(chunks) == 1)
+        }
+
+        // The off-by-one: a prompt that divides exactly still needs logits on the
+        // final, FULL chunk. This is the trap that silently regresses the fix.
+        do {
+            let chunks = PrefillPlan.plan(totalTokens: 1024, ubatch: 512)
+            check("an exact multiple yields two full chunks", chunks.count == 2)
+            check("the first chunk does not want logits", !chunks[0].needsLogits)
+            check("a full final chunk still wants logits", chunks[1].needsLogits)
+            check("the final chunk is the full ubatch", chunks[1].length == 512)
+        }
+
+        // A prompt shorter than one batch is a single chunk that does want logits.
+        do {
+            let chunks = PrefillPlan.plan(totalTokens: 100, ubatch: 512)
+            check("a short prompt is one chunk", chunks.count == 1)
+            check("a lone chunk wants logits", chunks[0].needsLogits)
+            check("its start is zero", chunks[0].start == 0)
+        }
+
+        // Exactly one ubatch.
+        do {
+            let chunks = PrefillPlan.plan(totalTokens: 512, ubatch: 512)
+            check("exactly one ubatch is one chunk", chunks.count == 1)
+            check("that chunk wants logits", chunks[0].needsLogits)
+        }
+
+        // One token over a batch boundary.
+        do {
+            let chunks = PrefillPlan.plan(totalTokens: 513, ubatch: 512)
+            check("513 splits into two chunks", chunks.count == 2)
+            check("the remainder chunk has length 1", chunks[1].length == 1)
+            check("the remainder chunk wants logits", chunks[1].needsLogits)
+            check("chunk starts are contiguous",
+                  chunks[0].start == 0 && chunks[1].start == 512)
+        }
+
+        // ubatch larger than the prompt.
+        do {
+            let chunks = PrefillPlan.plan(totalTokens: 10, ubatch: 4096)
+            check("a huge ubatch still yields one chunk", chunks.count == 1)
+            check("and it wants logits", chunks[0].needsLogits)
+        }
+
+        // logits index: exactly one position, never negative.
+        for n in [1, 100, 512, 513, 4096, 8192] {
+            let chunks = PrefillPlan.plan(totalTokens: n, ubatch: 512)
+            let withLogits = chunks.compactMap { PrefillPlan.logitsIndex(in: $0) }
+            check("one logits index for n=\(n)", withLogits.count == 1)
+            check("logits index is the chunk's last token for n=\(n)",
+                  withLogits.first == chunks.last!.length - 1)
+            check("logits index is never negative for n=\(n)", (withLogits.first ?? -1) >= 0)
+        }
+
+        // A chunk that does not want logits must never report an index, since
+        // writing logits[i]=1 there is the exact waste being removed.
+        do {
+            let chunks = PrefillPlan.plan(totalTokens: 2048, ubatch: 512)
+            check("non-final chunks report no logits index",
+                  PrefillPlan.logitsIndex(in: chunks[0]) == nil)
+            check("the final chunk reports one",
+                  PrefillPlan.logitsIndex(in: chunks[3]) == 511)
+        }
+
+        // Wasted work avoided: one fewer than the chunk count.
+        check("no waste for a single chunk", PrefillPlan.wastedWorkAvoided(totalTokens: 100, ubatch: 512) == 0)
+        check("an 8192-token prompt avoids 15 copies",
+              PrefillPlan.wastedWorkAvoided(totalTokens: 8192, ubatch: 512) == 15)
+        check("an empty prompt avoids nothing",
+              PrefillPlan.wastedWorkAvoided(totalTokens: 0, ubatch: 512) == 0)
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and
