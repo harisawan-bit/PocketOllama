@@ -599,7 +599,7 @@ print("Speculative decoding")
                                           newPrompt: sysTokens) == sysTokens.count)
         check("an empty new prompt prefills nothing",
               PrefixCache.tokensToPrefill(previousPrompt: sysTokens, previousCompletion: [],
-                                          newPrompt: []).count == 0)
+                                          newPrompt: []) == 0)
 
         // Savings reporting must agree with the accounting.
         let s = PrefixCache.prefillSavings(previousPrompt: sysTokens + turn1User + turn1Asst,
