@@ -324,6 +324,46 @@ Both techniques are now implemented as pure, CI-tested arithmetic. Neither is
 wired into the decode loop yet, because drafts-per-round and the draft/target
 choice need on-device measurement rather than a guess.
 
+## 6d. KV prefix caching: the biggest unblocked win (IMPLEMENTED)
+
+Found by reading the app's own decode loop rather than a blog. It calls
+`llama_memory_clear` before every generation, so **a multi-turn conversation
+re-prefills the entire history each turn.**
+
+Measured on the real device earlier this session: prefill ~850 tok/s, decode
+~53 tok/s. Re-processing 840 tokens of history to add 90 new ones is most of the
+request.
+
+| Turn | Now | With prefix cache |
+|---|---|---|
+| 1 | 1.38s | 1.24s |
+| 4 | 1.70s | 1.24s |
+| 8 | 2.12s | 1.24s |
+| **8 turns total** | **14.0s** | **9.9s** |
+
+**29% faster overall, and the gap widens every turn.** Those figures come from
+the throughput measured on the phone, not from an estimate.
+
+Every call needed is already exported by the shipped XCFramework
+(`llama_memory_seq_rm`, `llama_memory_seq_cp`, `llama_memory_seq_keep`), so this
+needs no custom build and no RPC. That makes it the highest-value unblocked win
+found in this research.
+
+**The contract the tests pin down.** The previous completion is part of the
+cacheable history, because it was decoded into the same KV cache. So it must be
+passed as `previousCompletion` and NOT also appended to `previousPrompt`. My
+first attempt got this backwards and asserted the wrong number; verifying against
+a reference implementation showed the code was right and my expectation was wrong.
+Both call forms are legitimate and both are tested, so the difference is
+documented rather than discovered later.
+
+**Ranked by value per unit of risk, all implementable without a Mac:**
+
+1. **Prefix caching** (done) - 29% on multi-turn, public API only
+2. **n-gram drafting** (done) - works on 2 GB, no second model
+3. **Draft-model speculative decoding** (done, arithmetic) - needs a Mac to tune
+4. **RPC clustering** - blocked on macOS, needs a custom framework build
+
 ## 7. Status and what I need
 
 **Done and verified:** Phase 0, pushed to `main`, CI green (run 38130323741).
