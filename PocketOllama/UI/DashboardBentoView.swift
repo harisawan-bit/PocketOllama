@@ -217,6 +217,10 @@ public struct DashboardBentoView: View {
         }
     }
 
+    /// Lower bound for the context control, shared with ModelBudget so the range
+    /// offered and the value produced cannot disagree.
+    private var contextFloor: Int { ContextSizing.floorContext(0) }
+
     /// Real core counts from the OS, not the lookup table.
     private var cores: HardwareAutoTuner.CoreCounts {
         HardwareAutoTuner.detectCoreCounts()
@@ -288,8 +292,7 @@ public struct DashboardBentoView: View {
                 // The floor is the shared one, not a hardcoded number: a 2048
                 // minimum left the low-RAM bands (a 2 GB A11, or any device that
                 // hits the memory guard) with a minimum above their safe maximum.
-                let lo = ContextSizing.floorContext(0)
-                in: Double(lo)...Double(max(lo, config.maxSafeContextTokens)),
+                in: Double(contextFloor)...Double(max(contextFloor, config.maxSafeContextTokens)),
                 step: 512
             )
             .disabled(reloadingForContext)

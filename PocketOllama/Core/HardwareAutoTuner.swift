@@ -22,6 +22,9 @@ public struct DeviceHardwareSpec: Sendable, Codable {
     public let is8GBPlus: Bool
     /// True when the chip was matched in the table rather than inferred from RAM.
     public let isKnownDevice: Bool
+    /// Threads to use when the perf-level sysctls are absent. A-series chips before
+    /// the A11 do not expose them, and every such part is a 2P+4E design.
+    public let fallbackThreads: Int
 }
 
 public final class HardwareAutoTuner: @unchecked Sendable {
@@ -109,7 +112,8 @@ public final class HardwareAutoTuner: @unchecked Sendable {
             defaultKVQuant: base.defaultKVQuant,
             supportsSpeculative: base.supportsSpeculative,
             is8GBPlus: base.is8GBPlus,
-            isKnownDevice: base.isKnownDevice
+            isKnownDevice: base.isKnownDevice,
+            fallbackThreads: base.fallbackThreads
         )
     }
 
@@ -301,7 +305,8 @@ public final class HardwareAutoTuner: @unchecked Sendable {
                 defaultKVQuant: row.kv,
                 supportsSpeculative: row.speculative,
                 is8GBPlus: row.is8GBPlus,
-                isKnownDevice: true
+                isKnownDevice: true,
+                fallbackThreads: row.fallbackThreads
             )
         }
 
@@ -325,7 +330,8 @@ public final class HardwareAutoTuner: @unchecked Sendable {
             defaultKVQuant: band.kv,
             supportsSpeculative: band.context >= 16384,
             is8GBPlus: totalRAMGB >= 7.2,
-            isKnownDevice: false
+            isKnownDevice: false,
+            fallbackThreads: 2
         )
     }
 
