@@ -28,6 +28,18 @@ public struct DashboardBentoView: View {
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 12) {
+                    if !isModelReady {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10))
+                            Text("NO MODEL LOADED. The server will answer 503 until you load one.")
+                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        }
+                        .foregroundColor(PocketTheme.roseAlert)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+                    }
+
                     // Top System Status Bar
                     topSystemBar
 
@@ -93,19 +105,6 @@ public struct DashboardBentoView: View {
 
     // MARK: - Top System Status Bar
     private var topSystemBar: some View {
-
-        if !isModelReady {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
-                Text("NO MODEL LOADED. The server will answer 503 until you load one.")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
-            }
-            .foregroundColor(PocketTheme.roseAlert)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 4)
-            .padding(.bottom, 6)
-        }
         HStack(spacing: 10) {
             HStack(spacing: 6) {
                 Circle()
