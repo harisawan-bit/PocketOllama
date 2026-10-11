@@ -499,8 +499,8 @@ print("Speculative decoding")
               NGramDrafting.draft(generated: [1], alreadyDrafted: [],
                                   cache: buildCache([1]), maxDraft: 4).isEmpty)
         check("draft never exceeds the cap",
-              NGramDrafting.draft(generated: tiled([1,2], 40), alreadyDrafted: [],
-                                  cache: buildCachetiled([1,2], 40), maxDraft: 5).count <= 5)
+              NGramDrafting.draft(generated: tiled([1,2], 40) + [1,2], alreadyDrafted: [],
+                                  cache: buildCache(tiled([1,2], 40) + [1,2]), maxDraft: 5).count <= 5)
         check("update with zero new tokens is a no-op", {
             var c = NGramDrafting.Cache()
             NGramDrafting.update(&c, generated: [1,2,3], newTokenCount: 0)
