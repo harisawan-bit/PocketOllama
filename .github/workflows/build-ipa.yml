@@ -50,17 +50,25 @@ jobs:
         # Guessing the pointer types would corrupt the KV cache silently, so the
         # macOS runner compiles a probe against the actual XCFramework and fails
         # here if any assumption is wrong.
+        #
+        # The framework is ios-arm64 only, so it cannot be LINKED on the x86_64
+        # runner. Type-checking with -typecheck against its headers still proves
+        # every field name and Swift type, which is the assumption at risk.
+        # `set -o pipefail` is load-bearing: without it a failing swiftc piped
+        # through tail still exits 0, and the gate passes while broken.
         run: |
+          set -o pipefail
           FW="Vendor/llama.xcframework/ios-arm64/llama.framework"
           if [ ! -d "$FW" ]; then
-            echo "framework not present, skipping probe" && exit 0
+            echo "::error::llama.framework missing; cannot verify the batch layout"
+            exit 1
           fi
-          # Compile for the host so it links, not just type-checks.
-          swiftc -parse-as-library \
-            -F "$(dirname "$FW")/.." \
+          swiftc -typecheck \
+            -target arm64-apple-ios16.4 \
+            -F "$(dirname "$FW")" \
             -I "$FW/Headers" \
-            Scripts/CIProbe/Probe.swift -o "$RUNNER_TEMP/po-probe" 2>&1 | tail -40
-          echo "probe compiled"
+            Scripts/CIProbe/LlamaAPIProbe.swift
+          echo "llama_batch and llama_memory_seq_* layout verified"
 
 
       - name: Build (unsigned)
