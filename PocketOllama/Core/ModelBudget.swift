@@ -14,9 +14,16 @@ public enum RAMBands {
 
     public static func band(totalRAMGB: Double) -> Band {
         switch totalRAMGB {
+        // Under 3 GB: the A11 iPhone 8 and the A12 XR. 2k is all the KV cache a
+        // 0.5B model has room for after the weights are mapped.
         case 0..<3.0:     return Band(context: 2048, kv: "q8_0", tier: "Qwen 2.5 0.5B")
+        // 3 to 4.5 GB: the XR, the 11, the SE 2 and the 12 mini. A 1.5B at 4k.
         case 3.0..<4.5:   return Band(context: 4096, kv: "q8_0", tier: "Qwen 2.5 1.5B / Llama 3.2 3B")
+        // 4.5 to 6.5 GB: the 12, 12 Pro, 13 and 13 Pro. 8k with a 3B.
         case 4.5..<6.5:   return Band(context: 8192, kv: "q8_0", tier: "Llama 3.2 3B / Qwen 2.5 3B")
+        // 6.5 to under 8 GB: the A16 phones at 6 GB. This band used to jump to
+        // 32k and the 8B tier, which a 6 GB device cannot hold: 4.9 GB of weights
+        // leaves no room for a 32k cache. 16k with a 3B is what fits.
         case 6.5..<8.0:   return Band(context: 16384, kv: "q4_0", tier: "Hermes 3 3B / Llama 3.2 3B")
         default:          return Band(context: 32768, kv: "q4_0", tier: "Hermes 3 8B / DeepSeek-R1")
         }

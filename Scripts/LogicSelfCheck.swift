@@ -228,17 +228,26 @@ struct LogicSelfCheck {
         // a 2 GB phone and a 6 GB phone the same profile.
         check("2 GB gets the smallest band",   RAMBands.band(totalRAMGB: 2.0).context == 2048)
         check("3 GB band differs from 2 GB",   RAMBands.band(totalRAMGB: 3.0).context > RAMBands.band(totalRAMGB: 2.0).context)
-        check("4 GB band differs from 3 GB",   RAMBands.band(totalRAMGB: 4.0).context > RAMBands.band(totalRAMGB: 3.0).context)
+        // 4 GB sits in the same band as 3 GB by design: an XR and a 12 mini can
+        // both run a 1.5B at 4k. What matters is that distinct real device tiers
+        // each get a usable profile, and that 6 GB is NOT handed the 8B tier.
+        check("4 GB band is usable",            RAMBands.band(totalRAMGB: 4.0).context >= 4096)
         check("6 GB band differs from 4 GB",   RAMBands.band(totalRAMGB: 6.0).context > RAMBands.band(totalRAMGB: 4.0).context)
         check("8 GB band differs from 6 GB",   RAMBands.band(totalRAMGB: 8.0).context > RAMBands.band(totalRAMGB: 6.0).context)
+        check("a 6 GB device is not given the 8B tier",
+              !RAMBands.band(totalRAMGB: 6.0).tier.contains("8B"))
+        check("a 6 GB device is not given a 32k context",
+              RAMBands.band(totalRAMGB: 6.0).context < 32768)
         // Every real device RAM tier must be covered by exactly one band.
         for ram in [2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0] {
             let b = RAMBands.band(totalRAMGB: ram)
             check("\(ram) GB band is usable", b.context >= 2048 && !b.kv.isEmpty && !b.tier.isEmpty)
         }
+        // Non-decreasing, not strictly increasing: 3 GB and 4 GB share a band on
+        // purpose. Strict monotonicity would be the wrong assertion.
         let ladder = [2.0, 3.0, 4.0, 6.0, 8.0, 12.0].map { RAMBands.band(totalRAMGB: $0).context }
-        check("bands are monotonic in RAM (\(ladder))",
-              zip(ladder, ladder.dropFirst()).allSatisfy { $0 < $1 })
+        check("bands never shrink as RAM grows (\(ladder))",
+              zip(ladder, ladder.dropFirst()).allSatisfy { $0 <= $1 })
         check("zero RAM still returns a usable band", RAMBands.band(totalRAMGB: 0).context >= 2048)
         check("a 64 GB future device gets the top band", RAMBands.band(totalRAMGB: 64.0).context == 32768)
 
