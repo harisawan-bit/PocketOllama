@@ -278,6 +278,52 @@ worth attempting.
 This is now the highest-value item that can actually be verified from this
 environment, and it directly serves "make this app very good".
 
+## 6c. n-gram lookup drafting: the right default for iOS (IMPLEMENTED)
+
+Found by reading llama.cpp's own `docs/speculative.md`, which lists seven
+speculative implementations. Six need a trained draft model. One does not.
+
+**n-gram drafting needs no second model at all.** It drafts by finding token
+sequences that already appeared in the current generation and repeating them.
+
+That makes it the correct default for a phone, and it settles the trade-off in
+section 6b:
+
+| | Draft model | n-gram lookup |
+|---|---|---|
+| Extra RAM | yes, a whole model | none, only counts |
+| Works on 2 GB | no | **yes** |
+| Needs training/conversion | yes | no |
+| Best case | high acceptance on any text | long repetitive output |
+
+Ported from `common/ngram-cache.cpp` at b11218, read line by line.
+
+**The bug the tests caught.** Upstream keeps two separate tables:
+
+    draft_min_sample_size_lax[NG_MAX] = { 2, 3, 3, 4 }
+    draft_min_percent_lax[NG_MAX]     = {66, 50, 50, 50}
+
+I initially used `{66,50,50,50}` for both, conflating a COUNT of observations with
+a PERCENTAGE share. That demanded 50 sightings of a 1-gram before drafting
+anything, so the implementation silently never drafted. A test now asserts both
+tables exactly, so the conflation cannot return.
+
+**Other verified behaviour.** A single sighting does not draft (1 < 3 samples). A
+50/50 split does not draft, because a coin-flip draft wastes the whole
+verification pass. The longest matching n-gram wins, since a longer match is
+stronger evidence. Key construction reads across the generated/drafted boundary,
+mirroring upstream's `get_token(inp, draft, j)` — getting that wrong is what makes
+a naive port fail on the second drafted token.
+
+**Where it helps, honestly.** Upstream reports acceptance around 0.58 in mixed
+use, up to 0.70 with the hash variant. It is not universal. Its own documented
+example is refactoring source code. On prose with no repetition it drafts nothing
+and costs one failed hash lookup.
+
+Both techniques are now implemented as pure, CI-tested arithmetic. Neither is
+wired into the decode loop yet, because drafts-per-round and the draft/target
+choice need on-device measurement rather than a guess.
+
 ## 7. Status and what I need
 
 **Done and verified:** Phase 0, pushed to `main`, CI green (run 38130323741).
