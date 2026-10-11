@@ -15,6 +15,10 @@ public struct DashboardBentoView: View {
     @State private var reloadingForContext: Bool = false
     @State private var contextReloadError: String? = nil
     @State private var bonjourError: String? = nil
+    /// Whether a model is loaded. The server toggle and the benchmark both depend
+    /// on it: neither did before, so both ran with no model and reported failure
+    /// in a way that looked like a device problem.
+    @State private var isModelReady: Bool = false
 
     let hardware = HardwareAutoTuner.shared.detectProfile()
 
@@ -59,11 +63,49 @@ public struct DashboardBentoView: View {
         .sheet(isPresented: $showingQRConnect) {
             QRConnectSheet(endpointURL: server.apiEndpointURL, hostname: config.serverHostname)
         }
-        .onAppear { watchBonjour() }
+        .onAppear {
+            watchBonjour()
+            refreshModelState()
+            pollModelState()
+        }
+    }
+
+    // MARK: - Model state
+
+    /// Reads the engine's readiness once.
+    private func refreshModelState() {
+        Task { @MainActor in
+            self.isModelReady = await LlamaEngine.shared.isModelReady
+        }
+    }
+
+    /// Keeps the loaded/unloaded state current. The engine is an actor, so this
+    /// cannot be observed directly; a short poll is the simplest correct answer.
+    private func pollModelState() {
+        Task { @MainActor in
+            while !Task.isCancelled {
+                let ready = await LlamaEngine.shared.isModelReady
+                if self.isModelReady != ready { self.isModelReady = ready }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
     }
 
     // MARK: - Top System Status Bar
     private var topSystemBar: some View {
+
+        if !isModelReady {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                Text("NO MODEL LOADED. The server will answer 503 until you load one.")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+            }
+            .foregroundColor(PocketTheme.roseAlert)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
+            .padding(.bottom, 6)
+        }
         HStack(spacing: 10) {
             HStack(spacing: 6) {
                 Circle()
@@ -127,6 +169,11 @@ public struct DashboardBentoView: View {
             }
 
             // Server Start / Stop Toggle Button
+            //
+            // Starting with no model loaded is allowed, but the button then says so
+            // instead of implying the server is ready. /health reports
+            // model_loaded:false, and chat requests return 503 rather than
+            // silently doing nothing.
             Button(action: {
                 withAnimation(.easeInOut(duration: 0.15)) {
                     if server.isRunning {
@@ -141,7 +188,11 @@ public struct DashboardBentoView: View {
                 HStack(spacing: 8) {
                     Image(systemName: server.isRunning ? "stop.fill" : "play.fill")
                         .font(.system(size: 12, weight: .black))
-                    Text(server.isRunning ? "Stop AI Server" : "Start Local Server (Port \(config.serverPort))")
+                    Text(server.isRunning
+                         ? "Stop AI Server"
+                         : (isModelReady
+                            ? "Start Local Server (Port \(config.serverPort))"
+                            : "Start Server (No Model Loaded)"))
                         .font(.system(size: 13, weight: .bold, design: .monospaced))
                 }
                 .frame(maxWidth: .infinity)
@@ -356,7 +407,16 @@ public struct DashboardBentoView: View {
                     .foregroundColor(PocketTheme.devCyan)
                     .cornerRadius(4)
                 }
-                .disabled(benchmark.isRunning)
+                // The benchmark needs a loaded model. Without this it ran anyway,
+                // hit the engine's not-loaded guard, and reported 0 tok/s, which
+                // looked like a broken phone rather than a missing model.
+                .disabled(benchmark.isRunning || !isModelReady)
+            }
+
+            if !isModelReady {
+                Text("Load a model to run the benchmark")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(PocketTheme.roseAlert)
             }
 
             if let res = benchmark.lastResult {

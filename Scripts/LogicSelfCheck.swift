@@ -262,6 +262,37 @@ struct LogicSelfCheck {
         check("the ceiling is respected", ContextSizing.floorContext(999_999) == 262144)
         check("a zero budget floors to 512", ContextSizing.floorContext(0) == 512)
 
+        print("Request validation")
+        let avail = ["Qwen3.5-0.8B-Q4_0", "hermes-3-3b"]
+        check("exact id resolves",        RequestValidation.resolves(requested: "Qwen3.5-0.8B-Q4_0", available: avail))
+        check("case-insensitive",         RequestValidation.resolves(requested: "qwen3.5-0.8b-q4_0", available: avail))
+        check(".gguf suffix tolerated",   RequestValidation.resolves(requested: "Qwen3.5-0.8B-Q4_0.gguf", available: avail))
+        check("typo is rejected",         !RequestValidation.resolves(requested: "Qwen3.5-0.8B", available: avail))
+        check("unknown is rejected",      !RequestValidation.resolves(requested: "gpt-4", available: avail))
+        check("empty is rejected",        !RequestValidation.resolves(requested: "", available: avail))
+        check("traversal is rejected",    !RequestValidation.resolves(requested: "../etc/passwd", available: avail))
+        check("no models means nothing resolves",
+              !RequestValidation.resolves(requested: "anything", available: []))
+        check("model id must be non-empty",  RequestValidation.modelIdIsWellFormed("a"))
+        check("model id rejects empty",      !RequestValidation.modelIdIsWellFormed("   "))
+        check("model id rejects slashes",    !RequestValidation.modelIdIsWellFormed("a/b"))
+        check("model id rejects traversal",  !RequestValidation.modelIdIsWellFormed(".."))
+
+        print("max_tokens bounds")
+        check("omitted is valid",          RequestValidation.maxTokensIsValid(nil))
+        check("positive is valid",         RequestValidation.maxTokensIsValid(10))
+        check("zero is invalid",           !RequestValidation.maxTokensIsValid(0))
+        check("negative is invalid",       !RequestValidation.maxTokensIsValid(-5))
+        check("omitted uses the default",  RequestValidation.clampMaxTokens(nil, contextTokens: 8192) == 2048)
+        check("in-range value passes through",
+              RequestValidation.clampMaxTokens(100, contextTokens: 8192) == 100)
+        check("absurd value is clamped",
+              RequestValidation.clampMaxTokens(99_999_999, contextTokens: 8192) == 8192 - 1024)
+        check("clamped value stays positive",
+              RequestValidation.clampMaxTokens(99_999_999, contextTokens: 512) >= 1)
+        check("negative is clamped, not rejected here",
+              RequestValidation.clampMaxTokens(-5, contextTokens: 8192) >= 1)
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and

@@ -231,9 +231,16 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         } else if (path.hasPrefix("/v1/chat/completions") || path == "/api/chat" || path == "/api/generate") && method == "POST" {
             await handleChat(request, connection: connection)
         } else if path == "/health" || path == "/v1/health" {
-            let runtime = await LlamaEngine.shared.isModelReady ? "Metal" : "idle"
+            let ready = await LlamaEngine.shared.isModelReady
+            // A bare "healthy" told a client the server was usable when no model
+            // was loaded, so every chat request then failed with a 503. The state
+            // and the loaded model name are reported instead.
+            let runtime = ready ? "Metal" : "idle"
+            let modelName = ready ? (await LlamaEngine.shared.activeModelName) : ""
+            let modelField = ready ? ",\"model\":\"\(modelName.jsonSafe)\"" : ""
             sendRaw(connection: connection, status: "200 OK", contentType: "application/json",
-                    body: "{\"status\":\"healthy\",\"runtime\":\"\(runtime)\"}")
+                    body: "{\"status\":\"healthy\",\"runtime\":\"\(runtime)\","
+                        + "\"model_loaded\":\(ready)\(modelField)}")
             RequestLogger.shared.log(method: method, path: path, statusCode: 200)
         } else {
             sendRaw(connection: connection, status: "404 Not Found", contentType: "application/json",
@@ -243,6 +250,20 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
     }
 
     /// Lists every GGUF actually present on disk, with real sizes and the loaded one marked.
+    /// The model ids the device can actually serve, read from disk.
+    ///
+    /// Single source of truth: `/v1/models`, `/api/tags` and the request
+    /// validator all read this, so the advertised list and the accepted list
+    /// cannot disagree.
+    static func availableModelIDs() -> [String] {
+        let dir = ModelDownloader.shared.getModelsDirectory()
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return files
+            .filter { $0.hasSuffix(".gguf") }
+            .sorted()
+            .map { ($0 as NSString).deletingPathExtension }
+    }
+
     /// Real bundle version. /api/version used to hardcode "0.1.48" while the app
     /// shipped 3.1.0, so an Ollama-compatible client was told the wrong version.
     static let appVersion: String = {
@@ -294,7 +315,30 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
         let model = (json["model"] as? String) ?? "pocketollama"
         let messages = (json["messages"] as? [[String: Any]]) ?? []
         let tools = (json["tools"] as? [[String: Any]]) ?? []
-        let maxTokens = (json["max_tokens"] as? Int) ?? (json["max_completion_tokens"] as? Int) ?? 1024
+        let requestedMaxTokens = (json["max_tokens"] as? Int) ?? (json["max_completion_tokens"] as? Int)
+
+        // A non-positive max_tokens is a client bug, not a request to generate
+        // nothing. 0 and negatives were accepted and returned an empty answer.
+        guard RequestValidation.maxTokensIsValid(requestedMaxTokens) else {
+            sendRaw(connection: connection, status: "400 Bad Request", contentType: "application/json",
+                    body: "{\"error\":{\"message\":\"max_tokens must be a positive integer\",\"type\":\"invalid_request_error\"}}")
+            RequestLogger.shared.log(method: "POST", path: path, statusCode: 400)
+            return
+        }
+
+        // An unrecognised model id used to run whatever was loaded, so a typo
+        // silently answered from the wrong model. /v1/models advertises exactly
+        // what is on disk, so anything else is a client error.
+        let available = Self.availableModelIDs()
+        guard RequestValidation.resolves(requested: model, available: available) else {
+            let known = available.joined(separator: ", ")
+            sendRaw(connection: connection, status: "404 Not Found", contentType: "application/json",
+                    body: "{\"error\":{\"message\":\"model '\\(model.jsonSafe)' not found. Available: \\(known.jsonSafe)\",\"type\":\"invalid_request_error\"}}")
+            RequestLogger.shared.log(method: "POST", path: path, statusCode: 404)
+            return
+        }
+        let maxTokens = RequestValidation.clampMaxTokens(
+            requestedMaxTokens, contextTokens: ConfigEngine.shared.contextWindowTokens)
 
         guard !messages.isEmpty || json["prompt"] != nil else {
             sendRaw(connection: connection, status: "400 Bad Request", contentType: "application/json",
@@ -437,17 +481,24 @@ public final class LLMServer: ObservableObject, @unchecked Sendable {
 
             let body: String
             if isOllama {
+                let oReasoning = completionReasoning.isEmpty ? "" :
+                    ",\"reasoning_content\":\"\(completionReasoning.jsonSafe)\""
                 body = """
-                {"model":"\(model.jsonSafe)","message":{"role":"assistant","content":"\(completionText.jsonSafe)"},"done":true,
+                {"model":"\(model.jsonSafe)","message":{"role":"assistant","content":"\(completionText.jsonSafe)"\(oReasoning)},"done":true,
                  "done_reason":"stop","prompt_eval_count":\(promptTokens),"eval_count":\(usage.completion)}
                 """
             } else {
                 toolCalls = HermesToolBridge.shared.parseStreamingChunk(accumulatedText: completionText).toolCalls
                 let toolBlock = toolCalls.isEmpty ? "" : toolCallsJSON(toolCalls)
                 let finish = toolCalls.isEmpty ? "stop" : "tool_calls"
+                // reasoning_content was accumulated above but never sent here, so
+                // the identical request answered differently depending on whether
+                // the client asked for streaming. It goes out in both modes now.
+                let reasoningField = completionReasoning.isEmpty ? "" :
+                    ",\"reasoning_content\":\"\(completionReasoning.jsonSafe)\""
                 body = """
                 {"id":"\(id)","object":"chat.completion","created":\(Self.nowEpoch),"model":"\(model.jsonSafe)",
-                 "choices":[{"index":0,"message":{"role":"assistant","content":"\(completionText.jsonSafe)"\(toolBlock)},"finish_reason":"\(finish)"}],
+                 "choices":[{"index":0,"message":{"role":"assistant","content":"\(completionText.jsonSafe)"\(reasoningField)\(toolBlock)},"finish_reason":"\(finish)"}],
                  "usage":{"prompt_tokens":\(promptTokens),"completion_tokens":\(usage.completion),"total_tokens":\(promptTokens + usage.completion)}}
                 """
             }
