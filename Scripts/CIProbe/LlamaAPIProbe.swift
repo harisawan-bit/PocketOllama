@@ -69,7 +69,12 @@ struct CIProbe {
     static func assertMemoryAPI() {
         let rm: (llama_memory_t, llama_seq_id, llama_pos, llama_pos) -> Bool = llama_memory_seq_rm
         let cp: (llama_memory_t, llama_seq_id, llama_seq_id, llama_pos, llama_pos) -> Void = llama_memory_seq_cp
-        let keep: (llama_memory_t, llama_seq_id, llama_pos, llama_pos) -> Void = llama_memory_seq_keep
+        // llama_memory_seq_keep takes TWO arguments, not four. An earlier draft of
+        // this probe asserted a four-argument shape copied from seq_rm, and the
+        // real build rejected it. PrefixCache.swift documents seq_keep as taking a
+        // position range, which is wrong for this llama.cpp version and is
+        // corrected here.
+        let keep: (llama_memory_t, llama_seq_id) -> Void = llama_memory_seq_keep
         let clear: (llama_memory_t, Bool) -> Void = llama_memory_clear
         _ = (rm, cp, keep, clear)
         print("  llama_memory_seq_rm   verified")

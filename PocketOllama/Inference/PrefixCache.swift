@@ -18,7 +18,13 @@ import Foundation
 ///   - `llama_memory_seq_rm(mem, 0, p0, -1)` drops tokens from position p0 onward
 ///   - `llama_memory_seq_cp(mem, src, dst, p0, p1)` copies a range between
 ///     sequences, which is how a cached prefix is restored without re-decoding
-///   - `llama_memory_seq_keep` retains only the tokens that matter
+///
+/// `llama_memory_seq_keep` is deliberately not used: in this llama.cpp version it
+/// takes only `(mem, seq_id)` and removes every token NOT belonging to that
+/// sequence, which is not the selective retention a prefix cache needs. The range
+/// form belongs to `seq_rm`. The CI probe pins both signatures, so a future
+/// llama.cpp bump that changes either fails the build rather than silently
+/// mis-managing the cache.
 ///
 /// Keeping one sequence id for the live conversation and a second for a saved
 /// snapshot is what lets a new request start from the cached prefix.
