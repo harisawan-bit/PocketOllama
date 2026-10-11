@@ -331,7 +331,7 @@ print("Speculative decoding")
         // softmax must produce a real distribution, including on hostile input.
         check("softmax sums to 1", Self.sumsToOne(SpeculativeDecoding.softmax([3.0,1.0,0.5])))
         check("softmax handles all-equal logits",
-              abs(SpeculativeDecoding.softmax([1.0,1.0,1.0]).reduce(0,+)) < 1e-5)
+              Self.sumsToOne(SpeculativeDecoding.softmax([1.0,1.0,1.0])))
         check("softmax survives a huge logit without NaN",
               SpeculativeDecoding.softmax([1e30, 0.0]).allSatisfy { $0.isFinite })
         check("softmax on empty is empty", SpeculativeDecoding.softmax([]).isEmpty)
@@ -375,7 +375,7 @@ print("Speculative decoding")
         // When the draft dominates everywhere, fall back to the target.
         let r2 = SpeculativeDecoding.residual(target: [0.2, 0.2, 0.2], draft: [0.9, 0.9, 0.9])
         check("residual falls back to target when fully dominated",
-              abs(r2.reduce(0,+)) < 1e-5 && r2.allSatisfy { $0.isFinite })
+              Self.sumsToOne(r2) && r2.allSatisfy { $0.isFinite })
         check("residual on mismatched lengths returns target",
               SpeculativeDecoding.residual(target: [1.0, 0.0], draft: [0.5]).count == 2)
 

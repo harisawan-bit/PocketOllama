@@ -105,7 +105,7 @@ public enum SpeculativeDecoding {
     /// Forces a distribution to sum to 1.0, or returns uniform if it cannot be.
     public static func normalised(_ probs: [Float]) -> [Float] {
         guard !probs.isEmpty else { return [] }
-        let sum = probs.reduce(0, +)
+        let sum = probs.reduce(Float(0), +)
         guard sum > 0, sum.isFinite else {
             let n = Float(probs.count)
             return [Float](repeating: 1.0 / n, count: probs.count)
