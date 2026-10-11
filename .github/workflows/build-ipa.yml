@@ -44,6 +44,25 @@ jobs:
           swiftc -O PocketOllama/Inference/PromptCompaction.swift PocketOllama/Inference/SpeculativeDecoding.swift PocketOllama/Inference/NGramDrafting.swift PocketOllama/Inference/PrefixCache.swift PocketOllama/Inference/PrefillPlan.swift PocketOllama/Core/ContextSizing.swift PocketOllama/Core/ModelBudget.swift PocketOllama/Core/DownloaderValidation.swift PocketOllama/Core/RequestValidation.swift PocketOllama/Server/HttpFraming.swift Scripts/LogicSelfCheck.swift -o "$RUNNER_TEMP/po-check"
           "$RUNNER_TEMP/po-check"
 
+      - name: Verify llama_batch and memory API against the real framework
+        # Wiring the prefill logits fix means filling a llama_batch by hand, and
+        # llama.h says llama_batch_init "leaves all members uninitialized".
+        # Guessing the pointer types would corrupt the KV cache silently, so the
+        # macOS runner compiles a probe against the actual XCFramework and fails
+        # here if any assumption is wrong.
+        run: |
+          FW="Vendor/llama.xcframework/ios-arm64/llama.framework"
+          if [ ! -d "$FW" ]; then
+            echo "framework not present, skipping probe" && exit 0
+          fi
+          # Compile for the host so it links, not just type-checks.
+          swiftc -parse-as-library \
+            -F "$(dirname "$FW")/.." \
+            -I "$FW/Headers" \
+            Scripts/CIProbe/Probe.swift -o "$RUNNER_TEMP/po-probe" 2>&1 | tail -40
+          echo "probe compiled"
+
+
       - name: Build (unsigned)
         run: |
           xcodebuild build \
