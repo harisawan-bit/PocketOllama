@@ -8,6 +8,7 @@ pinned to release **b11218**.
 - **Minimum iOS:** 16.4 (set by the llama.xcframework)
 - **API:** OpenAI `/v1/chat/completions`, Ollama `/api/chat`, `/api/tags`, embedded web console at `/`
 - **Discovery:** Bonjour `_ollama._tcp`, default port 11434
+- **Auth:** optional API key on the inference routes. Health checks and the dashboard stay open.
 
 ---
 
@@ -177,12 +178,21 @@ CI (`.github/workflows/build-ipa.yml`) runs on `macos-15` and additionally enfor
   `llama_model_load_from_file`, and the framework carries its Metal kernels.
 
 To cut a release, set `CFBundleShortVersionString` and `CFBundleVersion` in `project.yml`
-(XcodeGen generates the Info.plist from it, so editing the plist directly has no effect), then:
+(XcodeGen generates the Info.plist from it, so editing the plist directly has no effect), then
+tag and push. CI builds, verifies, and attaches the IPA to the release.
+
+Keep `CFBundleVersion` non-decreasing. iOS refuses to install an IPA whose build number is
+lower than what is already on the device, so a marketing-version reset needs a build number
+above every previous one.
+
+See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release, [CONTRIBUTING.md](CONTRIBUTING.md)
+for the conventions, and [REQUIREMENTS.md](REQUIREMENTS.md) for build and runtime prerequisites.
 
 ```bash
-git tag v2.2.3 && git push origin v2.2.3
+git tag v0.6 && git push origin v0.6
 ```
 
 ## License
 
-The llama.cpp XCFramework is built from the upstream release and is distributed under the MIT license.
+MIT. See [LICENSE](LICENSE). The llama.cpp XCFramework is built from the upstream
+release and remains under the MIT license held by its authors.
