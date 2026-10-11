@@ -151,8 +151,11 @@ public actor LlamaEngine {
             contextTokens: ctxTokens,
             kvQuant: ConfigEngine.shared.kvQuantization
         )
-        let availableNow = MemoryScavenger.shared.getAvailableMemoryBytes()
-        if availableNow < exactKV + JetsamShield.shared.safetyMarginBytes {
+        // Only enforce when the kernel actually reported a figure. Apple documents
+        // that os_proc_available_memory returns 0 for "cannot determine", and 0 was
+        // being compared directly, which failed every load on a healthy device.
+        if let availableNow = MemoryScavenger.shared.availableMemoryOrNil(),
+           availableNow < exactKV + JetsamShield.shared.safetyMarginBytes {
             llama_model_free(m)
             throw NSError(domain: "PocketOllama", code: 413, userInfo: [NSLocalizedDescriptionKey:
                 "Not enough free memory for a \(ctxTokens)-token context at this KV quantisation: "

@@ -1,5 +1,28 @@
 import Foundation
 
+/// RAM bands for devices not present in the device table.
+///
+/// Bands, not a single threshold. The old fallback had one 7.2 GB cut-off, so a
+/// 2 GB phone and a 6 GB phone were both handed the same 3B recommendation and
+/// the same 8192-token context. Dependency-free so CI can test the boundaries.
+public enum RAMBands {
+    public struct Band {
+        public let context: Int
+        public let kv: String
+        public let tier: String
+    }
+
+    public static func band(totalRAMGB: Double) -> Band {
+        switch totalRAMGB {
+        case 0..<3.0:     return Band(context: 2048, kv: "q8_0", tier: "Qwen 2.5 0.5B")
+        case 3.0..<4.5:   return Band(context: 4096, kv: "q8_0", tier: "Qwen 2.5 1.5B / Llama 3.2 3B")
+        case 4.5..<6.5:   return Band(context: 8192, kv: "q8_0", tier: "Llama 3.2 3B / Qwen 2.5 3B")
+        case 6.5..<8.0:   return Band(context: 16384, kv: "q4_0", tier: "Hermes 3 3B / Llama 3.2 3B")
+        default:          return Band(context: 32768, kv: "q4_0", tier: "Hermes 3 8B / DeepSeek-R1")
+        }
+    }
+}
+
 /// KV-cache arithmetic and context limits, in one dependency-free place.
 ///
 /// This logic was previously duplicated across GGUFHeaderParser (twice) and
@@ -79,7 +102,11 @@ public enum ModelBudget {
         // extra KV memory buys nothing.
         let trained = max(1, metadata.contextLengthTrained)
         let capped = min(memoryLimit, trained)
-        return min(262144, max(1, (capped / 1024) * 1024 == 0 ? capped : (capped / 1024) * 1024))
+        // One shared rule with the slider, so the range offered and the value
+        // produced cannot drift. The floor is 512 because the budget legitimately
+        // returns less than 1024 on the tightest devices, and flooring those to 0
+        // left no usable context at all.
+        return ContextSizing.floorContext(capped)
     }
 
     /// Recommend a KV quantisation for this model on this device: quality where

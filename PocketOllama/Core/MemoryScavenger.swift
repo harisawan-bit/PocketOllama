@@ -7,10 +7,26 @@ public final class MemoryScavenger: @unchecked Sendable {
 
     private init() {}
 
-    /// Real memory pressure, straight from the kernel. The deployment target is
-    /// 16.4, so the old pre-iOS-13 host_statistics64 fallback was unreachable.
+    /// Memory available to this process, straight from the kernel.
+    ///
+    /// Apple documents that this returns 0 when the process is not an app or has
+    /// already passed its memory limit. Treating that 0 as a measurement made the
+    /// post-load check compare a loaded multi-gigabyte model against zero bytes,
+    /// so every load was freed again and reported as "not enough free memory" on
+    /// an idle phone.
+    ///
+    /// Callers must therefore use `availableMemoryOrNil` when a zero means
+    /// "unknown". This remains available for display and for relative comparisons,
+    /// where the 0-returns-0 behaviour is harmless.
     public func getAvailableMemoryBytes() -> UInt64 {
         UInt64(os_proc_available_memory())
+    }
+
+    /// nil when the kernel reports 0, which means "cannot determine", never
+    /// "nothing is free". Use this for any decision that blocks the user.
+    public func availableMemoryOrNil() -> UInt64? {
+        let value = getAvailableMemoryBytes()
+        return value > 0 ? value : nil
     }
 
     /// Drops this process's own reclaimable memory: URL cache, then allocator

@@ -12,6 +12,14 @@ public enum ContextSizing {
         return (batch, ubatch)
     }
 
+    /// Floors a context budget to a clean slider step.
+    ///
+    /// Shares one rule with the slider so the range it offers and the value the
+    /// budget produces cannot disagree.
+    public static func floorContext(_ budget: Int) -> Int {
+        min(262_144, max(512, (budget / 1024) * 1024))
+    }
+
     /// Threads actually used: the configured value capped by the thermal governor.
     public static func effectiveThreads(configured: Int, thermalCap: Int) -> Int {
         max(1, min(configured, max(1, thermalCap)))

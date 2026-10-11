@@ -18,11 +18,22 @@ public final class JetsamShield: @unchecked Sendable {
         requestedContextTokens: Int,
         kvQuant: String = "q4_0"
     ) -> MemoryBudgetResult {
-        let availableRAM = MemoryScavenger.shared.purgeAndScavengeRAM()
-
-        // No model metadata is known at this point, so size the KV cache from the device profile
-        // and the requested context. GGUFHeaderParser refines this once the file is inspected.
+        // purgeAndScavengeRAM returns the post-purge reading, which can be 0 when
+        // the kernel cannot determine it. Falling back to the device budget keeps
+        // this estimate advisory, which is what the caller treats it as, instead
+        // of failing every load with a reading of zero.
         let hw = HardwareAutoTuner.shared.detectProfile()
+
+        // purgeAndScavengeRAM returns the post-purge reading, which can be 0 when
+        // the kernel cannot determine it. Falling back to the device budget keeps
+        // this estimate advisory, which is what the caller treats it as, instead
+        // of failing every load with a reading of zero.
+        let measured = MemoryScavenger.shared.purgeAndScavengeRAM()
+        let availableRAM = measured > 0 ? measured : hw.maxSafeRAMLimitBytes
+
+        // No model metadata is known at this point, so size the KV cache from the
+        // device profile and the requested context. GGUFHeaderParser refines this
+        // once the file is inspected.
         let bytesPerToken = Self.estimatedBytesPerToken(profile: hw, kvQuant: kvQuant)
         let kvCacheBytes = UInt64(Double(requestedContextTokens) * bytesPerToken)
 

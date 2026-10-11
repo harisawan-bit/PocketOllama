@@ -77,14 +77,29 @@ You can also drop any `.gguf` file into `Documents/models` through Finder or the
 
 ## Hardware guidance
 
-| Device | RAM | Comfortable model | Threads | Max safe context |
+| Device | SoC | RAM | Comfortable model | Max safe context |
 |---|---|---|---|---|
-| iPhone 16 Pro / Max (A18 Pro) | 8 GB | Hermes 3 8B Q4_K_M | 4 | 32k |
-| iPhone 16 / Plus (A18) | 8 GB | Hermes 3 8B Q4_K_M | 4 | 16k |
-| iPhone 15 Pro / Max (A17 Pro) | 8 GB | Hermes 3 8B Q4_K_M | 4 | 16k |
-| iPhone 15 / 15 Plus (A16) | 6 GB | Hermes 3 3B | 3 | 8k |
-| iPhone 14 Pro / Max (A16) | 6 GB | Hermes 3 3B | 3 | 8k |
-| iPhone 13 / 14 (A15) | 6 GB | Llama 3.2 3B | 3 | 8k |
+| iPhone 18 Pro / Max (A20 Pro) | A20 Pro | 8 GB | Hermes 3 8B Q4_K_M | 32k |
+| iPhone 18 / Air | A19 Pro / A19 | 8 GB | Hermes 3 8B Q4_K_M | 16k |
+| iPhone 17 Pro / Max (A19 Pro) | A19 Pro | 8 GB | Hermes 3 8B Q4_K_M | 32k |
+| iPhone 17 / 17e (A19) | A19 | 8 GB | Hermes 3 3B | 16k |
+| iPhone Air (A19 Pro) | A19 Pro | 8 GB | Hermes 3 8B Q4_K_M | 16k |
+| iPhone 16 Pro / Max (A18 Pro) | A18 Pro | 8 GB | Hermes 3 8B Q4_K_M | 32k |
+| iPhone 16 / 16 Plus (A18) | A18 | 8 GB | Hermes 3 8B Q4_K_M | 16k |
+| iPhone 16e (A18) | A18 | 8 GB | Hermes 3 3B | 16k |
+| iPhone 15 Pro / Max (A17 Pro) | A17 Pro | 8 GB | Hermes 3 8B Q4_K_M | 32k |
+| iPhone 15 / 15 Plus (A16) | A16 | 6 GB | Hermes 3 3B | 8k |
+| iPhone 14 Pro / Max (A16) | A16 | 6 GB | Hermes 3 3B | 8k |
+| iPhone 13 / 13 Pro (A15) | A15 | 4-6 GB | Llama 3.2 3B | 8k |
+| iPhone 12 / 12 Pro (A14) | A14 | 4-6 GB | Llama 3.2 3B | 4k |
+| iPhone 11 / SE 2 (A13) | A13 | 4 GB | Qwen 2.5 1.5B | 4k |
+| iPhone XR (A12) | A12 | 3 GB | Qwen 2.5 0.5B | 2k |
+| iPhone XS / Max (A12) | A12 | 4 GB | Qwen 2.5 0.5B | 2k |
+| iPhone X / 8 / 8 Plus (A11) | A11 | 2-3 GB | Qwen 2.5 0.5B | 2k |
+
+A device that is not in this table, including iPads and anything released after it was
+written, is sized by a measured-RAM band rather than being told it is a specific chip:
+under 3 GB gets 2k and the 0.5B tier, 4.5 GB gets 8k, and 8 GB or more gets 32k.
 
 Context limits are clamped against measured available memory at load time, so a device with less free
 RAM than the table implies will get a smaller context rather than a crash.
@@ -127,7 +142,13 @@ Verified against the shipped `llama.xcframework` (llama.cpp b11218):
   outrun iOS backgrounding.
 
 
-- iOS 16.4 or later, device only. There is no simulator slice of the pinned XCFramework.
+- **iOS 16.4 or later, device only.** That floor is set by the dependency, not by
+  this app: the bundled llama.cpp XCFramework declares `MinimumOSVersion 16.4` in its
+  own `Info.plist`, which its build script sets from `IOS_MIN_OS_VERSION=16.4`.
+  Anything older cannot link against it, so the app cannot run on iOS 8 through 15
+  no matter what the deployment target says. Lowering it would mean building
+  llama.cpp from source against an older SDK and re-verifying Metal support on
+  those chips. There is no simulator slice of the pinned XCFramework.
 - The IPA is unsigned and requires re-signing to install.
 - No increased-memory-limit entitlement under a personal provisioning profile, so the largest models
   only fit on 8 GB devices.

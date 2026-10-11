@@ -223,6 +223,36 @@ struct LogicSelfCheck {
         check("negative yields zero", bytes("-5 GB") == 0)
         check("zero yields zero", bytes("0 GB") == 0)
 
+        print("RAM bands")
+        // Each band must get its own recommendation. A single 7.2 GB cut-off gave
+        // a 2 GB phone and a 6 GB phone the same profile.
+        check("2 GB gets the smallest band",   RAMBands.band(totalRAMGB: 2.0).context == 2048)
+        check("3 GB band differs from 2 GB",   RAMBands.band(totalRAMGB: 3.0).context > RAMBands.band(totalRAMGB: 2.0).context)
+        check("4 GB band differs from 3 GB",   RAMBands.band(totalRAMGB: 4.0).context > RAMBands.band(totalRAMGB: 3.0).context)
+        check("6 GB band differs from 4 GB",   RAMBands.band(totalRAMGB: 6.0).context > RAMBands.band(totalRAMGB: 4.0).context)
+        check("8 GB band differs from 6 GB",   RAMBands.band(totalRAMGB: 8.0).context > RAMBands.band(totalRAMGB: 6.0).context)
+        // Every real device RAM tier must be covered by exactly one band.
+        for ram in [2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0] {
+            let b = RAMBands.band(totalRAMGB: ram)
+            check("\(ram) GB band is usable", b.context >= 2048 && !b.kv.isEmpty && !b.tier.isEmpty)
+        }
+        let ladder = [2.0, 3.0, 4.0, 6.0, 8.0, 12.0].map(RAMBands.band(totalRAMGB:).context)
+        check("bands are monotonic in RAM (\(ladder))",
+              zip(ladder, ladder.dropFirst()).allSatisfy { $0 < $1 })
+        check("zero RAM still returns a usable band", RAMBands.band(totalRAMGB: 0).context >= 2048)
+        check("a 64 GB future device gets the top band", RAMBands.band(totalRAMGB: 64.0).context == 32768)
+
+        print("Context floor")
+        // The budget never returns below 512, so anything flooring higher either
+        // blocks a device or offers an unreachable value in the slider.
+        check("a 1023-token budget floors to 512, not 1023",
+              ContextSizing.floorContext(1023) == 512)
+        check("a 1024-token budget stays 1024", ContextSizing.floorContext(1024) == 1024)
+        check("a 5000-token budget floors to 4096", ContextSizing.floorContext(5000) == 4096)
+        check("a sub-512 budget floors to 512", ContextSizing.floorContext(100) == 512)
+        check("the ceiling is respected", ContextSizing.floorContext(999_999) == 262144)
+        check("a zero budget floors to 512", ContextSizing.floorContext(0) == 512)
+
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
         // n_ubatch <= n_batch invariant, or the context fails to initialise and
