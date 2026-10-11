@@ -236,7 +236,7 @@ struct LogicSelfCheck {
             let b = RAMBands.band(totalRAMGB: ram)
             check("\(ram) GB band is usable", b.context >= 2048 && !b.kv.isEmpty && !b.tier.isEmpty)
         }
-        let ladder = [2.0, 3.0, 4.0, 6.0, 8.0, 12.0].map(RAMBands.band(totalRAMGB:).context)
+        let ladder = [2.0, 3.0, 4.0, 6.0, 8.0, 12.0].map { RAMBands.band(totalRAMGB: $0).context }
         check("bands are monotonic in RAM (\(ladder))",
               zip(ladder, ladder.dropFirst()).allSatisfy { $0 < $1 })
         check("zero RAM still returns a usable band", RAMBands.band(totalRAMGB: 0).context >= 2048)
