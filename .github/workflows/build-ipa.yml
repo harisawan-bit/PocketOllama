@@ -44,7 +44,7 @@ jobs:
           swiftc -O PocketOllama/Inference/PromptCompaction.swift PocketOllama/Inference/SpeculativeDecoding.swift PocketOllama/Inference/NGramDrafting.swift PocketOllama/Inference/PrefixCache.swift PocketOllama/Inference/PrefillPlan.swift PocketOllama/Core/ContextSizing.swift PocketOllama/Core/ModelBudget.swift PocketOllama/Core/DownloaderValidation.swift PocketOllama/Core/RequestValidation.swift PocketOllama/Server/HttpFraming.swift Scripts/LogicSelfCheck.swift -o "$RUNNER_TEMP/po-check"
           "$RUNNER_TEMP/po-check"
 
-      - name: Verify the llama API shapes by compiling against the real framework
+      - name: Type-check the llama API shapes against the real framework
         # Wiring the prefill logits fix means filling a llama_batch by hand, and
         # llama.h says llama_batch_init "leaves all members uninitialized".
         # Guessing a pointer type would corrupt the KV cache silently, producing
@@ -59,10 +59,14 @@ jobs:
         # filter still exits 0, and a gate that cannot fail is worse than no gate.
         run: |
           set -o pipefail
-          xcodebuild build -project PocketOllama.xcodeproj -scheme CIProbe \
-            -destination "generic/platform=iOS" -configuration Debug \
+          xcodebuild build-for-testing -project PocketOllama.xcodeproj \
+            -scheme CIProbe -destination "generic/platform=iOS" \
+            -configuration Debug \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" 2>&1 | tail -40
-          echo "llama_batch and llama_memory_seq_* shapes verified against the real framework"
+          # Compiling proves the types. Running the probe on the simulator would
+          # prove the assertions execute, but the XCFramework has no simulator
+          # slice, so a compiled probe is the strongest check available here.
+          echo "llama_batch and llama_memory_seq_* shapes type-checked against the real framework"
 
       - name: Build (unsigned)
         run: |
