@@ -35,6 +35,9 @@ struct LogicSelfCheck {
         if !condition { failures += 1 }
     }
 
+    static func sumsToOne(_ xs: [Float]) -> Bool { abs(xs.reduce(0, +)) < 1e-5 }
+    static func approx(_ a: Float, _ b: Float) -> Bool { abs(a - b) < 1e-4 }
+
     static func main() {
         print("PartialUTF8Decoder")
         // "e with acute" is 0xC3 0xA9. Split across two tokens it must survive intact.
@@ -321,6 +324,104 @@ struct LogicSelfCheck {
             }
             check("return \(v) yields a defined action", ok)
         }
+
+print("Speculative decoding")
+        func probs(_ xs: [Float]) -> [Float] { SpeculativeDecoding.softmax(xs) }
+
+        // softmax must produce a real distribution, including on hostile input.
+        check("softmax sums to 1", Self.sumsToOne(SpeculativeDecoding.softmax([3.0,1.0,0.5])))
+        check("softmax handles all-equal logits",
+              abs(SpeculativeDecoding.softmax([1.0,1.0,1.0]).reduce(0,+)) < 1e-5)
+        check("softmax survives a huge logit without NaN",
+              SpeculativeDecoding.softmax([1e30, 0.0]).allSatisfy { $0.isFinite })
+        check("softmax on empty is empty", SpeculativeDecoding.softmax([]).isEmpty)
+        check("softmax argmax preserved",
+              SpeculativeDecoding.softmax([0.1, 9.0, 0.2]).enumerated().max(by: { $0.element < $1.element })!.offset == 1)
+
+        // The acceptance rule, r <= p_tgt / p_dft.
+        check("accepts when r is below the ratio",
+              SpeculativeDecoding.decide(pTarget: 0.8, pDraft: 0.4, residual: [], u: 0.5) == .accept)
+        check("rejects when r exceeds the ratio",
+              {
+                if case .reject = SpeculativeDecoding.decide(pTarget: 0.2, pDraft: 0.8, residual: [1.0], u: 0.9) { return true }
+                return false
+              }())
+        // The ideal case: identical distributions must ALWAYS accept, at any u.
+        var identicalAlwaysAccept = true
+        for u in stride(from: Float(0), through: Float(0.999), by: Float(0.05)) {
+            if SpeculativeDecoding.decide(pTarget: 0.5, pDraft: 0.5, residual: [], u: u) != .accept {
+                identicalAlwaysAccept = false
+            }
+        }
+        check("identical distributions always accept", identicalAlwaysAccept)
+        // A zero draft probability is the unbounded-ratio limit: accept.
+        check("zero draft probability accepts",
+              SpeculativeDecoding.decide(pTarget: 0.5, pDraft: 0.0, residual: [], u: 0.99) == .accept)
+        // Zero target probability can never be accepted.
+        check("zero target probability rejects",
+              {
+                if case .reject = SpeculativeDecoding.decide(pTarget: 0.0, pDraft: 0.5, residual: [1.0], u: 0.01) { return true }
+                return false
+              }())
+        // NaN must not silently reject everything.
+        check("NaN input does not trap",
+              SpeculativeDecoding.decide(pTarget: .nan, pDraft: .nan, residual: [], u: .nan) == .accept)
+
+        // Residual: max(0, p_tgt - p_dft), renormalised.
+        let r1 = SpeculativeDecoding.residual(target: [0.9, 0.05, 0.05], draft: [0.2, 0.4, 0.4])
+        check("residual sums to 1", Self.sumsToOne(r1))
+        check("residual is non-negative", r1.allSatisfy { $0 >= 0 })
+        check("residual zeroes where draft dominates", r1[1] == 0 && r1[2] == 0)
+        // When the draft dominates everywhere, fall back to the target.
+        let r2 = SpeculativeDecoding.residual(target: [0.2, 0.2, 0.2], draft: [0.9, 0.9, 0.9])
+        check("residual falls back to target when fully dominated",
+              abs(r2.reduce(0,+)) < 1e-5 && r2.allSatisfy { $0.isFinite })
+        check("residual on mismatched lengths returns target",
+              SpeculativeDecoding.residual(target: [1.0, 0.0], draft: [0.5]).count == 2)
+
+        // Sampling from the residual must land in range.
+        var inRange = true
+        for u in stride(from: Float(0), through: Float(0.99), by: Float(0.01)) {
+            let idx = SpeculativeDecoding.sampleIndex(from: r1, u: u)
+            if idx < 0 || idx >= r1.count { inRange = false }
+        }
+        check("sampling stays in range", inRange)
+        check("u=0 picks the first non-empty entry",
+              SpeculativeDecoding.sampleIndex(from: [0.0, 1.0], u: 0.0) == 1)
+        check("u near 1 picks the last entry",
+              SpeculativeDecoding.sampleIndex(from: [0.3, 0.3, 0.4], u: 0.999) == 2)
+        check("NaN u does not trap", SpeculativeDecoding.sampleIndex(from: [0.5, 0.5], u: .nan) == 0)
+
+        // Throughput model: several tokens per target pass.
+        check("perfect acceptance yields k+1 tokens",
+              Self.approx(SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: 1.0, draftsPerRound: 4), 5.0))
+        check("zero acceptance yields 1 token",
+              Self.approx(SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: 0.0, draftsPerRound: 4), 1.0))
+        check("0.9 acceptance beats plain decoding",
+              SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: 0.9, draftsPerRound: 4) > 3.0)
+        check("throughput rises monotonically with acceptance",
+              (0.5...0.9).allSatisfy { a in
+                  SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: a, draftsPerRound: 4)
+                    < SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: a + 0.05, draftsPerRound: 4)
+              })
+        check("k=0 degenerates to 1 token",
+              SpeculativeDecoding.expectedTokensPerPass(acceptanceRate: 0.9, draftsPerRound: 0) == 1)
+
+        // Worthwhileness: two models must be resident, so RAM is the gate.
+        let big: UInt64 = 5 * 1024 * 1024 * 1024
+        let small: UInt64 = 400 * 1024 * 1024
+        check("worthwhile with room to spare",
+              SpeculativeDecoding.isWorthwhile(freeRAMBytes: 8 * 1024 * 1024 * 1024,
+                                               targetModelBytes: big, draftModelBytes: small))
+        check("not worthwhile when it will not fit",
+              !SpeculativeDecoding.isWorthwhile(freeRAMBytes: 2 * 1024 * 1024 * 1024,
+                                                targetModelBytes: big, draftModelBytes: small))
+        check("not worthwhile when the draft is as large as the target",
+              !SpeculativeDecoding.isWorthwhile(freeRAMBytes: 64 * 1024 * 1024 * 1024,
+                                                targetModelBytes: big, draftModelBytes: big))
+        check("not worthwhile on unknown free RAM",
+              !SpeculativeDecoding.isWorthwhile(freeRAMBytes: 0,
+                                                targetModelBytes: big, draftModelBytes: small))
 
         print("ContextSizing")
         // Every value offered in the prefill batch picker must satisfy the
